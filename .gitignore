@@ -1,0 +1,24 @@
+# Внутренние материалы (не публиковать)
+Транскрипция Новая запись (2).txt
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Vite cache
+.vite/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
