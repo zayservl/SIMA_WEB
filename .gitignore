@@ -33,3 +33,4 @@ backend/build/
 backend/dist/backend/.coverage
 *.egg-info/
 backend/.coverage
+backend/output/

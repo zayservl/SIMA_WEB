@@ -1,27 +1,64 @@
 """ЦМР — цифровая модель рельефа.
 
 Порт из legacy `processings/CMR.py` (GroundProcessing).
-Алгоритм: PDAL SMRF → elm → outlier → sample → range(Classification[2:2])
-→ writers.gdal output_type:"mean" → (опц.) fillnodata интерполяция.
+Все параметры инкапсулированы в SMRFConfig / FillConfig dataclass-ах.
+Без хардкода — SMRF, интерполяция, output_type настраиваются через конфиг.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import pdal
 import rasterio
+import numpy as np
 from rasterio.fill import fillnodata
 from osgeo import gdal
 
 from sima_dem_core.check_classification import CheckClassification
 
 
+@dataclass
+class SMRFConfig:
+    """Параметры SMRF (Simple Morphological Filter)."""
+    slope: float = 0.2
+    window: int = 16
+    threshold: float = 0.45
+    scalar: float = 1.2
+    returns: list = field(default_factory=lambda: ["first", "last", "intermediate", "only"])
+
+    def to_dict(self) -> dict:
+        return {"type": "filters.smrf", "slope": self.slope, "window": self.window,
+                "threshold": self.threshold, "scalar": self.scalar, "returns": self.returns}
+
+
+@dataclass
+class FillConfig:
+    """Параметры интерполяции nodata-дырок.
+
+    fill_holes: заполнять только внутренние дырки (не экстраполировать края).
+    max_search_distance: радиус поиска соседей для интерполяции.
+    smoothing_iterations: сглаживаний при интерполяции.
+    """
+    fill_holes: bool = True
+    max_search_distance: int = 100
+    smoothing_iterations: int = 0
+
+
+@dataclass
+class RasterOutputConfig:
+    """Параметры вывода растра через writers.gdal."""
+    output_type: str = "mean"
+    data_type: str = "float32"
+    gdaldriver: str = "GTiff"
+
+
 class GroundProcessing:
-    """Построение ЦМР из LAS по алгоритму SMRF (Simple Morphological Filter)."""
+    """Построение ЦМР из LAS по алгоритму SMRF."""
 
     def __init__(
         self,
@@ -34,6 +71,9 @@ class GroundProcessing:
         cut_smrf: bool = False,
         save_ground_las: bool = False,
         is_CRS_EPSG: bool = True,
+        smrf: Optional[SMRFConfig] = None,
+        fill: Optional[FillConfig] = None,
+        raster_out: Optional[RasterOutputConfig] = None,
     ) -> None:
         self.classified_ground: Optional[str] = None
         self.raster: list[str] = []
@@ -43,9 +83,12 @@ class GroundProcessing:
         self.crs = crs
         self.interpolate = interpolate
         self.is_CRS_EPSG = is_CRS_EPSG
-        self.interpol_dist = interpol_dist
         self.cut_smrf = cut_smrf
         self.save_ground_las = save_ground_las
+
+        self.smrf = smrf or SMRFConfig()
+        self.fill = fill or FillConfig(max_search_distance=interpol_dist)
+        self.raster_out = raster_out or RasterOutputConfig()
 
     @staticmethod
     def execute(pipeline: list) -> None:
@@ -53,92 +96,51 @@ class GroundProcessing:
         pipe.execute()
 
     def _get_ground(self, input_path: str, raster: str, out_path: Optional[str]) -> None:
-        """SMRF + классификация → ЦМР (mean) из неклассифицированных точек."""
+        smrf_stage = self.smrf.to_dict()
+        if self.cut_smrf:
+            smrf_stage = {"type": "filters.smrf", "threshold": 3,
+                          "returns": self.smrf.returns}
+
         pipeline: list = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
-            {
-                "type": "filters.assign",
-                "value": [
-                    "NumberOfReturns = 1 WHERE (NumberOfReturns == 0)",
-                    "ReturnNumber = 1 WHERE (ReturnNumber == 0)",
-                ],
-            },
+            {"type": "filters.assign", "value": [
+                "NumberOfReturns = 1 WHERE (NumberOfReturns == 0)",
+                "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]},
             {"type": "filters.assign", "assignment": "Classification[:]=0"},
             {"type": "filters.elm"},
             {"type": "filters.outlier"},
-            {
-                "type": "filters.smrf",
-                "slope": 0.2,
-                "window": 16,
-                "threshold": 0.45,
-                "scalar": 1.2,
-                "returns": ["first", "last", "intermediate", "only"],
-            },
+            smrf_stage,
             {"type": "filters.sample", "radius": self.resolution},
             {"type": "filters.range", "limits": "Classification[2:2]"},
-            {
-                "filename": raster,
-                "gdaldriver": "GTiff",
-                "resolution": self.resolution,
-                "output_type": "mean",
-                "type": "writers.gdal",
-                "data_type": "float32",
-            },
+            {"filename": raster, "gdaldriver": self.raster_out.gdaldriver,
+             "resolution": self.resolution, "output_type": self.raster_out.output_type,
+             "type": "writers.gdal", "data_type": self.raster_out.data_type},
         ]
         if self.aoi and self.is_CRS_EPSG:
             pipeline.insert(3, {"type": "filters.crop", "polygon": self.aoi})
-        if self.cut_smrf:
-            pipeline[5] = {
-                "type": "filters.smrf",
-                "threshold": 3,
-                "returns": ["first", "last", "intermediate", "only"],
-            }
         if self.save_ground_las:
-            if out_path:
-                ground_las = out_path
-            else:
-                path, ext = input_path.split(".")
-                ground_las = path + "_ground." + ext
+            ground_las = out_path or (input_path.rsplit(".", 1)[0] + "_ground.las")
             pipeline.insert(7, {"type": "writers.las", "filename": ground_las})
         GroundProcessing.execute(pipeline)
 
     def _save_ground(self, input_path: str, raster: str, out_path: Optional[str]) -> None:
-        """Построить ЦМР из уже классифицированных ground-точек (класс 2)."""
         pipeline: list = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
-            {
-                "type": "filters.assign",
-                "value": [
-                    "NumberOfReturns = 1 WHERE (NumberOfReturns == 0)",
-                    "ReturnNumber = 1 WHERE (ReturnNumber == 0)",
-                ],
-            },
+            {"type": "filters.assign", "value": [
+                "NumberOfReturns = 1 WHERE (NumberOfReturns == 0)",
+                "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]},
             {"type": "filters.sample", "radius": self.resolution},
             {"type": "filters.range", "limits": "Classification[2:2]"},
             {"type": "filters.elm"},
             {"type": "filters.outlier"},
-            {
-                "filename": raster,
-                "gdaldriver": "GTiff",
-                "resolution": self.resolution,
-                "output_type": "mean",
-                "type": "writers.gdal",
-                "data_type": "float32",
-            },
+            {"filename": raster, "gdaldriver": self.raster_out.gdaldriver,
+             "resolution": self.resolution, "output_type": self.raster_out.output_type,
+             "type": "writers.gdal", "data_type": self.raster_out.data_type},
         ]
         if self.save_ground_las:
-            if out_path:
-                ground_las = out_path
-            else:
-                path, ext = input_path.split(".")
-                ground_las = path + "_ground." + ext
-            pipeline.insert(
-                3,
-                {
-                    "type": "filters.assign",
-                    "value": ["Classification = 1 WHERE Classification != 2"],
-                },
-            )
+            ground_las = out_path or (input_path.rsplit(".", 1)[0] + "_ground.las")
+            pipeline.insert(3, {"type": "filters.assign",
+                                "value": ["Classification = 1 WHERE Classification != 2"]})
             pipeline.insert(4, {"type": "writers.las", "filename": ground_las})
             if self.aoi and self.is_CRS_EPSG:
                 pipeline.insert(3, {"type": "filters.crop", "polygon": self.aoi})
@@ -146,13 +148,13 @@ class GroundProcessing:
 
     def _get_raster_name(self, path: str, out_path: Optional[str]) -> tuple[str, str]:
         if out_path:
-            filename, file_extension = os.path.splitext(out_path)
+            filename, _ = os.path.splitext(out_path)
         else:
-            filename, file_extension = os.path.splitext(path)
-        self.classified_ground = filename + "classified" + file_extension
+            filename, _ = os.path.splitext(path)
+        self.classified_ground = filename + "classified.tif"
         tail = Path(filename).stem.replace("_relief", "")
-        raster = os.path.join(self.output_folder, tail + "_dem" + ".tif")
-        smoothed = os.path.join(self.output_folder, tail + "_dem_smooth" + ".tif")
+        raster = os.path.join(self.output_folder, tail + "_dem.tif")
+        smoothed = os.path.join(self.output_folder, tail + "_dem_smooth.tif")
         return raster, smoothed
 
     def _set_projection(self, raster: str, crs_wkt: Optional[str]) -> None:
@@ -163,24 +165,52 @@ class GroundProcessing:
             if ds is not None:
                 ds.SetProjection(crs_wkt)
                 ds = None
-        except Exception as ee:  # noqa: BLE001
+        except Exception as ee:
             print("gdal SetProjection failed:", ee)
 
     def _interpolate(self, raster: str) -> None:
+        """Заполнить внутренние nodata-дырки без экстраполяции краёв."""
         with rasterio.open(raster) as src:
             profile = src.profile
             arr = src.read(1)
+            nodata = src.nodata
+
+            if not self.fill.fill_holes or nodata is None:
+                return
+
+            mask = src.read_masks(1)
             arr_filled = fillnodata(
-                arr,
-                mask=src.read_masks(1),
-                max_search_distance=self.interpol_dist,
-                smoothing_iterations=0,
+                arr.copy(),
+                mask=mask,
+                max_search_distance=self.fill.max_search_distance,
+                smoothing_iterations=self.fill.smoothing_iterations,
             )
+
+            # Восстановить nodata на краях (не экстраполировать границы)
+            # Краевые пиксели — те, у которых mask был 0 ИЛИ они на границе растра
+            border_mask = np.ones_like(mask, dtype=bool)
+            border_mask[1:-1, 1:-1] = False  # только внутренние пиксели
+
+            # Пиксели, которые были nodata до интерполяции
+            was_nodata = (arr == nodata)
+
+            # Не экстраполировать: краевые пиксели остаются nodata
+            # Внутренние дырки заполняются
+            # Определяем "дырки" как nodata-пиксели, окружённые валидными данными
+            from scipy.ndimage import binary_dilation
+            valid = mask == 255
+            # Дырка = nodata, окружённая валидными пикселями (не на границе)
+            # Диляция валидной маски — пиксели на границе валидной области
+            dilated_valid = binary_dilation(valid, iterations=1)
+            holes = was_nodata & dilated_valid & ~border_mask
+            # Пиксели, которые не дырки и были nodata — остаются nodata (без экстраполяции)
+            keep_nodata = was_nodata & ~holes
+            arr_filled = np.where(keep_nodata, nodata, arr_filled)
+
         with rasterio.open(raster, "w", **profile) as dest:
             dest.write_band(1, arr_filled)
 
     def get_raster(self, path: str, crs_wkt: Optional[str] = None, out_path: Optional[str] = None) -> None:
-        """Главная точка входа: построить ЦМР из LAS-файла."""
         check_class = CheckClassification(path)
         raster, smoothed = self._get_raster_name(path, out_path)
         if check_class.is_ground:

@@ -6,11 +6,10 @@ import numpy as np
 import rasterio
 from pathlib import Path
 
-from sima_dem_dsm.dsm import DSMBuilder
+from sima_dem_dsm.dsm import DSMBuilder, DSMConfig
 
 
 def _make_surface_las(path: str, n: int = 500) -> str:
-    """Создать тестовый LAS с точками поверхности (все классы)."""
     las = laspy.create(point_format=3, file_version="1.2")
     xs = np.linspace(100, 200, n, dtype=np.float64)
     ys = np.linspace(100, 200, n, dtype=np.float64)
@@ -26,7 +25,6 @@ def _make_surface_las(path: str, n: int = 500) -> str:
 class TestDSMBuilder:
 
     def test_build_creates_raster(self, tmp_path):
-        """DSMBuilder создаёт GeoTIFF из LAS."""
         las_dir = tmp_path / "las"
         las_dir.mkdir()
         las_path = str(las_dir / "test.las")
@@ -35,17 +33,14 @@ class TestDSMBuilder:
         out_dir.mkdir()
         builder = DSMBuilder(
             output=str(out_dir),
-            resolution=1.0,
             crs="EPSG:32642",
-            interpolate=False,
-            output_type="max",
+            config=DSMConfig(resolution=1.0, interpolate=False),
         )
         result = builder.build(las_path)
         assert Path(result).exists()
         assert result in builder.raster
 
     def test_build_with_interpolation(self, tmp_path):
-        """DSMBuilder с интерполяцией заполняет nodata."""
         las_dir = tmp_path / "las"
         las_dir.mkdir()
         las_path = str(las_dir / "test.las")
@@ -54,17 +49,13 @@ class TestDSMBuilder:
         out_dir.mkdir()
         builder = DSMBuilder(
             output=str(out_dir),
-            resolution=1.0,
             crs="EPSG:32642",
-            interpolate=True,
-            interpol_dist=50,
-            output_type="max",
+            config=DSMConfig(resolution=1.0, interpolate=True, max_search_distance=50),
         )
         result = builder.build(las_path)
         assert Path(result).exists()
 
     def test_build_custom_output_path(self, tmp_path):
-        """DSMBuilder с кастомным выходным путём."""
         las_dir = tmp_path / "las"
         las_dir.mkdir()
         las_path = str(las_dir / "test.las")
@@ -74,9 +65,8 @@ class TestDSMBuilder:
         custom_path = str(out_dir / "custom_dsm.tif")
         builder = DSMBuilder(
             output=str(out_dir),
-            resolution=1.0,
             crs="EPSG:32642",
-            interpolate=False,
+            config=DSMConfig(resolution=1.0, interpolate=False),
         )
         result = builder.build(las_path, out_path=custom_path)
         assert result == custom_path
