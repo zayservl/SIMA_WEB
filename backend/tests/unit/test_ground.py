@@ -83,10 +83,9 @@ class TestGroundProcessing:
         assert "test_dem_smooth.tif" in smoothed
 
     def test_interpolate_fills_nodata(self, tmp_path):
-        """Интерполяция заполняет nodata-пиксели."""
-        # Создать тестовый GeoTIFF с nodata
+        """DTM не заполняет nodata — интерполяция только при сглаживании."""
         data = np.full((20, 20), 100.0, dtype=np.float32)
-        data[5:10, 5:10] = -9999.0  # nodata holes
+        data[5:10, 5:10] = -9999.0
         profile = {
             "driver": "GTiff",
             "dtype": "float32",
@@ -110,6 +109,6 @@ class TestGroundProcessing:
         gp._interpolate(tif_path)
         with rasterio.open(tif_path) as src:
             result = src.read(1)
-        # Проверим, что nodata уменьшилось
+        # DTM: nodata сохраняется (не заполняется)
         nodata_count = np.sum(result == -9999.0)
-        assert nodata_count < 25  # Исходно было 25 nodata пикселей
+        assert nodata_count == 25  # 5x5 блок остаётся

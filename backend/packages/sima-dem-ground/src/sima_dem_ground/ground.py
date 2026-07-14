@@ -169,46 +169,8 @@ class GroundProcessing:
             print("gdal SetProjection failed:", ee)
 
     def _interpolate(self, raster: str) -> None:
-        """Заполнить внутренние nodata-дырки без экстраполяции краёв."""
-        with rasterio.open(raster) as src:
-            profile = src.profile
-            arr = src.read(1)
-            nodata = src.nodata
-
-            if not self.fill.fill_holes or nodata is None:
-                return
-
-            mask = src.read_masks(1)
-            arr_filled = fillnodata(
-                arr.copy(),
-                mask=mask,
-                max_search_distance=self.fill.max_search_distance,
-                smoothing_iterations=self.fill.smoothing_iterations,
-            )
-
-            # Восстановить nodata на краях (не экстраполировать границы)
-            # Краевые пиксели — те, у которых mask был 0 ИЛИ они на границе растра
-            border_mask = np.ones_like(mask, dtype=bool)
-            border_mask[1:-1, 1:-1] = False  # только внутренние пиксели
-
-            # Пиксели, которые были nodata до интерполяции
-            was_nodata = (arr == nodata)
-
-            # Не экстраполировать: краевые пиксели остаются nodata
-            # Внутренние дырки заполняются
-            # Определяем "дырки" как nodata-пиксели, окружённые валидными данными
-            from scipy.ndimage import binary_dilation
-            valid = mask == 255
-            # Дырка = nodata, окружённая валидными пикселями (не на границе)
-            # Диляция валидной маски — пиксели на границе валидной области
-            dilated_valid = binary_dilation(valid, iterations=1)
-            holes = was_nodata & dilated_valid & ~border_mask
-            # Пиксели, которые не дырки и были nodata — остаются nodata (без экстраполяции)
-            keep_nodata = was_nodata & ~holes
-            arr_filled = np.where(keep_nodata, nodata, arr_filled)
-
-        with rasterio.open(raster, "w", **profile) as dest:
-            dest.write_band(1, arr_filled)
+        """При DTM пустоты остаются (не заполняются). Интерполяция — только при сглаживании."""
+        pass
 
     def get_raster(self, path: str, crs_wkt: Optional[str] = None, out_path: Optional[str] = None) -> None:
         check_class = CheckClassification(path)
