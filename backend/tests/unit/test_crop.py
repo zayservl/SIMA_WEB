@@ -6,7 +6,7 @@ import numpy as np
 import json
 from pathlib import Path
 
-from sima_dem.crop import Crop
+from sima_dem_core.crop import Crop
 
 
 def _make_las(path: str, n: int = 100) -> str:

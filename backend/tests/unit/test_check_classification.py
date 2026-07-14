@@ -6,7 +6,7 @@ import numpy as np
 import tempfile
 from pathlib import Path
 
-from sima_dem.check_classification import CheckClassification
+from sima_dem_core.check_classification import CheckClassification
 
 
 def _make_las(path: str, classifications: list[int]) -> str:

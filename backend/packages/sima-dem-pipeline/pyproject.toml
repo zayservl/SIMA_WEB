@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sima-dem-pipeline"
+version = "0.1.0"
+description = "СИМА — оркестрация конвейера рельефа"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+    "laspy>=2.0",
+    "rasterio>=1.2",
+    "sima-dem-core",
+    "sima-dem-ground",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

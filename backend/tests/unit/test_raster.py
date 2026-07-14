@@ -6,9 +6,9 @@ import numpy as np
 from pathlib import Path
 from scipy.ndimage import gaussian_filter
 
-from sima_dem.raster.smooth import gauss_smooth
-from sima_dem.raster.median import med_filter
-from sima_dem.raster.tpi import calculate_tpi
+from sima_dem_core.raster.smooth import gauss_smooth
+from sima_dem_core.raster.median import med_filter
+from sima_dem_core.raster.tpi import calculate_tpi
 
 
 def _write_test_tif(path: str, data: np.ndarray, nodata: float = -9999.0, resolution: float = 1.0) -> str:

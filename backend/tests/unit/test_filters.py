@@ -5,9 +5,9 @@ import laspy
 import numpy as np
 from pathlib import Path
 
-from sima_dem.filters.manual_filter import ManualFilter
-from sima_dem.filters.stat_filter import StatFilter
-from sima_dem.filters.range_filter import RangeFilter
+from sima_dem_core.filters.manual_filter import ManualFilter
+from sima_dem_core.filters.stat_filter import StatFilter
+from sima_dem_core.filters.range_filter import RangeFilter
 
 
 def _make_las(path: str, z_values: list[float], classifications: list[int] = None) -> str:

@@ -31,3 +31,5 @@ backend/htmlcov/
 backend/*.egg-info/
 backend/build/
 backend/dist/backend/.coverage
+*.egg-info/
+backend/.coverage

@@ -6,7 +6,7 @@ import numpy as np
 import json
 from pathlib import Path
 
-from sima_dem.height import get_every_nth
+from sima_dem_core.height import get_every_nth
 
 
 def _make_ground_las(path: str, n: int = 100) -> str:

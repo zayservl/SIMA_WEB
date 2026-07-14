@@ -11,13 +11,13 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .ground import GroundProcessing
-from .curvature import CurvatureProcessing
-from .raster.smooth import gauss_smooth
-from .raster.tpi import calculate_tpi
-from .filters import ManualFilter, StatFilter, RangeFilter, OutlierFilter
-from .crop import Crop
-from .height import get_every_nth
+from sima_dem_ground.ground import GroundProcessing
+from sima_dem_core.curvature import CurvatureProcessing
+from sima_dem_core.raster.smooth import gauss_smooth
+from sima_dem_core.raster.tpi import calculate_tpi
+from sima_dem_core.filters import ManualFilter, StatFilter, RangeFilter, OutlierFilter
+from sima_dem_core.crop import Crop
+from sima_dem_core.height import get_every_nth
 
 
 @dataclass

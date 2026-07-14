@@ -5,7 +5,7 @@ import rasterio
 import numpy as np
 from pathlib import Path
 
-from sima_dem.curvature import CurvatureProcessing
+from sima_dem_core.curvature import CurvatureProcessing
 
 
 def _write_test_tif(path: str, data: np.ndarray, nodata: float = -9999.0, resolution: float = 1.0) -> str:

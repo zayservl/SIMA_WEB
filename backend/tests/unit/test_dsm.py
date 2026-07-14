@@ -6,7 +6,7 @@ import numpy as np
 import rasterio
 from pathlib import Path
 
-from sima_dem.dsm import DSMBuilder
+from sima_dem_dsm.dsm import DSMBuilder
 
 
 def _make_surface_las(path: str, n: int = 500) -> str:

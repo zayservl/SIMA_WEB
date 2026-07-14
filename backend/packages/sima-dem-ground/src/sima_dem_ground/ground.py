@@ -17,7 +17,7 @@ import rasterio
 from rasterio.fill import fillnodata
 from osgeo import gdal
 
-from .check_classification import CheckClassification
+from sima_dem_core.check_classification import CheckClassification
 
 
 class GroundProcessing:

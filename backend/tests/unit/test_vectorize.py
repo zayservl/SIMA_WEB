@@ -6,7 +6,7 @@ import numpy as np
 import json
 from pathlib import Path
 
-from sima_dem.raster.vectorize import binarize, bin_to_polys, raster_crop
+from sima_dem_core.raster.vectorize import binarize, bin_to_polys, raster_crop
 
 
 def _write_test_tif(path: str, data: np.ndarray, nodata: float = -9999.0, resolution: float = 1.0) -> str:

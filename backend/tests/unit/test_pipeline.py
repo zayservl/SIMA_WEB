@@ -5,7 +5,7 @@ import laspy
 import numpy as np
 from pathlib import Path
 
-from sima_dem.pipeline import ReliefPipeline, PipelineConfig
+from sima_dem_pipeline.pipeline import ReliefPipeline, PipelineConfig
 
 
 def _make_test_las(path: str, n: int = 500) -> str:

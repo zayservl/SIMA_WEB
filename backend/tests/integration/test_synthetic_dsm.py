@@ -11,8 +11,8 @@ import laspy
 import rasterio
 from pathlib import Path
 
-from sima_dem.dsm import DSMBuilder
-from sima_dem.ground import GroundProcessing
+from sima_dem_dsm.dsm import DSMBuilder
+from sima_dem_ground.ground import GroundProcessing
 
 # CRS for synthetic test
 SYNTH_CRS = "EPSG:32642"

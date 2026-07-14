@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sima-dem-dsm"
+version = "0.1.0"
+description = "СИМА — ЦМД: построение цифровой модели поверхности (DSM)"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+    "laspy>=2.0",
+    "rasterio>=1.2",
+    "gdal",
+    "pdal",
+    "sima-dem-core",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

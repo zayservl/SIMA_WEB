@@ -6,7 +6,7 @@ import numpy as np
 import rasterio
 from pathlib import Path
 
-from sima_dem.ground import GroundProcessing
+from sima_dem_ground.ground import GroundProcessing
 
 
 def _make_ground_las(path: str, n: int = 500) -> str:

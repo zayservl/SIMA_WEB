@@ -16,7 +16,7 @@ import laspy
 
 from tests.conftest import TLO_LAS, REFERENCE_DSM, TEST_CRS_WKT, TEST_DATA_DIR
 from tests.fixtures.restore_las import restore_absolute_las
-from sima_dem.ground import GroundProcessing
+from sima_dem_ground.ground import GroundProcessing
 
 
 # Skip if test data not available
