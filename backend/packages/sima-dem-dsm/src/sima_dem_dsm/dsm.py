@@ -61,6 +61,7 @@ class DSMBuilder:
                 "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]},
             {"type": "filters.elm"},
             {"type": "filters.outlier"},
+            {"type": "filters.range", "limits": "Classification[1:5]"},
             {"type": "filters.sample", "radius": cfg.resolution},
             {"filename": raster, "gdaldriver": cfg.gdaldriver,
              "resolution": cfg.resolution, "output_type": cfg.output_type,

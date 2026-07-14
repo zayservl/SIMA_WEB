@@ -169,8 +169,37 @@ class GroundProcessing:
             print("gdal SetProjection failed:", ee)
 
     def _interpolate(self, raster: str) -> None:
-        """При DTM пустоты остаются (не заполняются). Интерполяция — только при сглаживании."""
-        pass
+        """Интерполировать внутренние дырки в DTM. Краевые nodata (вне данных LAS) остаются.
+
+        Правило: области без LAS-данных — остаются пустыми. Внутренние дырки
+        (где LAS есть, но точек мало/нет в ячейке) — интерполируются через fillnodata.
+        Различение через binary_fill_holes: дырки внутри валидной области заполняются.
+        """
+        with rasterio.open(raster) as src:
+            profile = src.profile
+            arr = src.read(1)
+            nodata = src.nodata
+            mask = src.read_masks(1)
+
+        if nodata is None:
+            return
+
+        from scipy.ndimage import binary_fill_holes
+        valid = mask == 255
+        holes = binary_fill_holes(valid) & ~valid
+
+        if not np.any(holes):
+            return
+
+        arr_filled = fillnodata(
+            arr.copy(), mask=mask,
+            max_search_distance=self.fill.max_search_distance,
+            smoothing_iterations=self.fill.smoothing_iterations,
+        )
+        arr = np.where(holes, arr_filled, arr)
+
+        with rasterio.open(raster, "w", **profile) as dest:
+            dest.write_band(1, arr)
 
     def get_raster(self, path: str, crs_wkt: Optional[str] = None, out_path: Optional[str] = None) -> None:
         check_class = CheckClassification(path)

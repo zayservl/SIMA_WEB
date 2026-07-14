@@ -83,7 +83,7 @@ class TestGroundProcessing:
         assert "test_dem_smooth.tif" in smoothed
 
     def test_interpolate_fills_nodata(self, tmp_path):
-        """DTM не заполняет nodata — интерполяция только при сглаживании."""
+        """DTM интерполирует внутренние дырки, краевые nodata остаются."""
         data = np.full((20, 20), 100.0, dtype=np.float32)
         data[5:10, 5:10] = -9999.0
         profile = {
@@ -109,6 +109,6 @@ class TestGroundProcessing:
         gp._interpolate(tif_path)
         with rasterio.open(tif_path) as src:
             result = src.read(1)
-        # DTM: nodata сохраняется (не заполняется)
+        # Внутренние дырки (5x5 блок, окружённый валидными) — заполнены
         nodata_count = np.sum(result == -9999.0)
-        assert nodata_count == 25  # 5x5 блок остаётся
+        assert nodata_count == 0  # все 25 внутренних дырок заполнены
