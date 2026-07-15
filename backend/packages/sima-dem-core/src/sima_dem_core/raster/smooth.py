@@ -1,21 +1,15 @@
-"""Гауссово сглаживание растра с интерполяцией дырок.
+"""Гауссово сглаживание растра.
 
-Правило: DTM строится с пустотами (nodata). При сглаживании внутренние дырки
-интерполируются (заполняются), но экстраполяция краёв недопустима.
-
-Различие дырка vs край:
-  - Дырка: nodata-пиксель, окружённый валидными данными со всех сторон.
-  - Край: nodata-пиксель, примыкающий к границе области данных снаружи.
-
-Определение через connected components: nodata-пиксели, касающиеся
-границы растра, — это край (не экстраполировать). Остальные — дырки.
+Порт из legacy `processings/raster_utils.py::gauss_smooth`.
+Legacy: gauss_filter → nodata restore. Без предварительной интерполяции дырок.
+Опционально: интерполяция внутренних дырок перед сглаживанием (fill_holes=True).
 """
 
 from __future__ import annotations
 
 import rasterio
 import numpy as np
-from scipy.ndimage import gaussian_filter, label, binary_fill_holes
+from scipy.ndimage import gaussian_filter, binary_fill_holes
 from rasterio.fill import fillnodata
 
 
@@ -25,17 +19,9 @@ def gauss_smooth(
     sigma: float,
     order: int,
     window_size: int,
-    fill_holes: bool = True,
+    fill_holes: bool = False,
     max_search_distance: int = 100,
 ) -> None:
-    """Гаусс-сглаживание с интерполяцией внутренних дырок.
-
-    DTM может иметь nodata-пустоты. Перед сглаживанием:
-    1. Внутренние дырки (nodata, окружённые валидными) интерполируются.
-    2. Краевые nodata (примыкающие к границе данных) остаются.
-    3. gauss_filter применяется к массиву без экстремальных nodata.
-    4. После gauss — краевые nodata восстанавливаются.
-    """
     with rasterio.open(raster) as src:
         profile = src.profile
         mask = src.read_masks(1)
@@ -45,16 +31,15 @@ def gauss_smooth(
     valid_mask = mask == 255
 
     if fill_holes and nodata is not None:
-        holes_mask = _find_internal_holes(valid_mask)
-        if np.any(holes_mask):
+        holes = _find_internal_holes(valid_mask)
+        if np.any(holes):
             filled = fillnodata(
-                array.copy(),
-                mask=mask,
+                array.copy(), mask=mask,
                 max_search_distance=max_search_distance,
                 smoothing_iterations=0,
             )
-            array = np.where(holes_mask, filled, array)
-            valid_mask = valid_mask | holes_mask
+            array = np.where(holes, filled, array)
+            valid_mask = valid_mask | holes
 
     fill_val = np.median(array[valid_mask]) if np.any(valid_mask) else 0.0
     work = np.where(valid_mask, array, fill_val)
@@ -70,12 +55,5 @@ def gauss_smooth(
 
 
 def _find_internal_holes(valid_mask: np.ndarray) -> np.ndarray:
-    """Найти внутренние дырки — nodata, окружённые валидными данными.
-
-    Использует binary_fill_holes: заполляет дырки в валидной маске,
-    потом вычитает исходную маску — разница и есть дырки.
-    Краевые nodata (касаются границы растра) не считаются дырками.
-    """
     filled = binary_fill_holes(valid_mask)
-    holes = filled & ~valid_mask
-    return holes
+    return filled & ~valid_mask

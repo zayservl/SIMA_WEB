@@ -15,7 +15,9 @@ from typing import Optional
 from sima_dem_ground.ground import GroundProcessing, SMRFConfig, FillConfig, RasterOutputConfig
 from sima_dem_core.curvature import CurvatureProcessing
 from sima_dem_core.raster.smooth import gauss_smooth
+from sima_dem_core.raster.median import med_filter
 from sima_dem_core.raster.tpi import calculate_tpi, TPIConfig
+from sima_dem_core.raster.contours import generate_contours
 from sima_dem_core.filters import ManualFilter, StatFilter, RangeFilter, OutlierFilter
 from sima_dem_core.crop import Crop
 from sima_dem_core.height import get_every_nth
@@ -50,10 +52,12 @@ class PipelineConfig:
     fallback_to_min_z: bool = True
 
     # Сглаживание
+    smoothing_method: str = "gauss"
     gauss_sigma: Optional[float] = None
     gauss_order: int = 0
     gauss_window: int = 5
     gauss_fill_holes: bool = True
+    median_window: int = 5
 
     # TPI
     do_tpi: bool = False
@@ -66,6 +70,10 @@ class PipelineConfig:
     # Высоты
     do_heights: bool = False
     height_step: int = 10
+
+    # Горизонтали (изолинии)
+    do_contours: bool = False
+    contour_intervals: list = field(default_factory=lambda: [0.5, 2, 5, 10])
 
     save_ground_las: bool = True
 
@@ -152,9 +160,8 @@ class ReliefPipeline:
                 ground_path = str(Path(self.config.output_dir) / (stem + "_ground.las"))
             ground.get_raster(filtered, crs_wkt=self.config.crs, out_path=ground_path)
 
-            # Сглаживание с интерполяцией дырок
             smoothed_raster = None
-            if self.config.gauss_sigma is not None:
+            if self.config.smoothing_method == "gauss" and self.config.gauss_sigma is not None:
                 for raster in ground.raster[-1:]:
                     stem = Path(raster).stem.replace("_dem", "")
                     smoothed_raster = os.path.join(self.config.output_dir, stem + "_dem_smooth.tif")
@@ -165,6 +172,14 @@ class ReliefPipeline:
                         fill_holes=self.config.gauss_fill_holes,
                         max_search_distance=self.config.interpol_dist,
                     )
+                    self.result.smoothed_rasters.append(smoothed_raster)
+            elif self.config.smoothing_method == "median" and self.config.median_window > 0:
+                for raster in ground.raster[-1:]:
+                    smoothed_raster = os.path.join(self.config.output_dir,
+                                                  Path(raster).stem + "_dem_smooth.tif")
+                    import shutil
+                    shutil.copy2(raster, smoothed_raster)
+                    med_filter(smoothed_raster, self.config.median_window)
                     self.result.smoothed_rasters.append(smoothed_raster)
 
             # Базовый растр для slopes/aspect — сглаженный если есть, иначе сырой (#4)
@@ -202,6 +217,18 @@ class ReliefPipeline:
                 heights_path = os.path.join(self.config.output_dir, stem + "_alt.geojson")
                 get_every_nth(ground_path, self.config.height_step, heights_path, self.config.crs)
                 self.result.height_files.append(heights_path)
+
+            if self.config.do_contours and base_raster:
+                stem = Path(las_path).stem
+                for interval in self.config.contour_intervals:
+                    contour_path = os.path.join(self.config.output_dir,
+                                                f"{stem}_contours_{interval}.gpkg")
+                    generate_contours(
+                        raster_path=base_raster,
+                        interval=interval,
+                        output_path=contour_path,
+                        crs_wkt=self.config.crs,
+                    )
 
         self.result.dem_rasters = ground.raster
         return self.result
