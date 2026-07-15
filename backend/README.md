@@ -154,6 +154,127 @@ svc = ReliefService(root_dir="output")
 result = svc.run(request)
 ```
 
+### Доступные параметры для интеграции
+
+#### ReliefRequest (корневой запрос)
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `params` | ReliefParams | — | Параметры расчёта (обязательное) |
+| `tiles` | list[TileInput] | [] | Список пар тайлов для обработки |
+| `project_id` | str | "default" | Идентификатор проекта |
+| `season` | str \| None | None | Сезон съёмки (Q3) |
+| `repository` | str \| None | None | Репозиторий сохранения (Q3, S3 prefix) |
+| `resolution` | float | 1.0 | Разрешение ЦМР в метрах (Q3) |
+| `session_id` | str \| None | None | Идентификатор сессии (для возобновления) |
+
+#### TileInput (один тайл)
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `name` | str | — | Имя тайла (обязательное) |
+| `vls_path` | str \| None | None | Путь к LAS-файлу (ВЛС) |
+| `afs_path` | str \| None | None | Путь к TIFF-файлу (АФС, для CRS) |
+| `aoi` | str \| None | None | Путь к shapefile AOI (обрезка) |
+| `existing_dtm` | str \| None | None | Существующая ЦМР (Q3 «Использование существующей ЦМР») |
+
+#### ReliefParams (параметры расчёта)
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `target_crs` | str | "" | Целевая СК (WKT или EPSG) |
+| `filter_method` | str | "smrf" | Метод классификации рельефа |
+| `filter` | FilterParams | defaults | Параметры фильтрации LAS |
+| `smrf` | SmrfParams | defaults | Параметры SMRF |
+| `smoothing` | SmoothingParams | disabled | Сглаживание ЦМР |
+| `dsm` | DsmParams | disabled | Построение ЦММ (DSM) |
+| `derivatives` | DerivativesParams | defaults | Производные: уклон/экспозиция/TPI + интерполяция |
+| `vectors` | VectorsParams | defaults | Горизонтали + TIN |
+| `heights` | HeightsParams | disabled | Отметки высот |
+| `deterministic` | bool | False | Детерминизм (seed) |
+| `seed` | int | 0 | Seed для детерминизма |
+
+#### filter_method — классификация «Рельеф»
+
+| Значение | Описание | Алгоритм |
+|---|---|---|
+| `"smrf"` | SMRF (по умолчанию) | PDAL `filters.smrf` внутри ground-классификации |
+| `"manual"` | Ручная фильтрация | `filters.range` по Z[z_min:z_max] |
+| `"stat"` | Статистическая | μ±mσ по Z (filters.stats + filters.range) |
+| `"range"` | Перцентильная | min+%% диапазон Z (filters.stats + filters.range) |
+| `"outlier"` | Outlier removal | PDAL `filters.outlier` (statistical, mean_k, multiplier) |
+
+#### SmrfParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `slope` | float | 0.2 | Наклон SMRF |
+| `window` | int | 16 | Размер окна SMRF |
+| `threshold` | float | 0.45 | Порог SMRF |
+| `scalar` | float | 1.2 | Скаляр SMRF |
+| `cut_smrf` | bool | False | Упрощённый SMRF (threshold=3 только) |
+| `elm` | bool | True | Extended Local Minimum (всегда включён) |
+| `outlier` | bool | True | Statistical outlier removal (всегда включён) |
+
+#### FilterParams (для manual/stat/range/outlier)
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `spm_min` | float \| None | None | Z_min для manual |
+| `spm_max` | float \| None | None | Z_max для manual |
+| `spr_num` | int \| None | None | m для stat (μ±mσ) |
+| `spp_min` | float \| None | None | Мин. перцентиль для range (0-100) |
+| `spp_max` | float \| None | None | Макс. перцентиль для range (0-100) |
+| `mean_k` | int \| None | None | k соседей для outlier |
+| `mult` | float \| None | None | Множитель σ для outlier / m для stat |
+
+#### SmoothingParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `enabled` | bool | False | Включить сглаживание |
+| `sigma` | float | 2.0 | σ гауссова фильтра (умножается на resolution) |
+| `order` | int | 0 | Порядок гауссова фильтра (0 = сглаживание) |
+| `window` | int | 5 | Размер окна (truncate = ((window-1)/2 - 0.5) / sigma) |
+
+#### DsmParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `enabled` | bool | False | Включить построение ЦММ |
+| `output_type` | str | "max" | Тип растеризации (max = верхняя поверхность) |
+| `interpolate` | bool | True | Интерполяция дырок |
+| `fill_holes` | bool | True | Заполнение внутренних дырок |
+| `max_search_distance` | int | 100 | Макс. дистанция поиска для fillnodata |
+
+#### DerivativesParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `slopes` | bool | False | Построить карту уклонов |
+| `slopes_res` | float | 1.0 | Разрешение карты уклонов (м) |
+| `aspect` | bool | False | Построить карту экспозиции |
+| `aspect_res` | float | 1.0 | Разрешение карты экспозиции (м) |
+| `tpi` | bool | False | Построить TPI |
+| `tpi_radii` | list | [270, 810, 2430] | Радиусы TPI (м) |
+| `interpolation` | bool | True | Интерполяция отсутствующих значений ЦМР |
+| `inter_amp` | int | 100 | Макс. дистанция интерполяции (м) |
+
+#### VectorsParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `horizontals` | list | [0.5, 2.0, 5.0, 10.0] | Шаги горизонталей (м) |
+| `tin` | bool | False | Построить TIN-поверхность |
+
+#### HeightsParams
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `enabled` | bool | False | Включить отметки высот |
+| `source` | str | "las" | Источник: "las" (облако точек) или "dem" (растр ЦМР) |
+| `step` | int | 10 | Каждая n-я точка ground (для source=las) |
+
 ## Ключевые алгоритмические решения
 
 1. **Без экстраполяции краёв** — `fillnodata` заполняет только внутренние дырки. Краевые nodata остаются.
