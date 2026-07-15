@@ -1,0 +1,211 @@
+"""Оценка/валидация исходных материалов (АФС=GeoTIFF, ВЛС=LAS).
+
+Чистый Python: laspy/rasterio/pyproj. Без QGIS.
+Извлекает: СК, площадь экстента, разрешение (АФС), плотность точек и диапазон
+высот ТЛО (ВЛС). Соответствует Q3 «Оценка файлов ВЛС/АФС» и контракту
+src/api/types.ts (AfsReport/VlsReport/MaterialAssessment/FailedTile).
+
+Примечание: масштаб ОФП (ofp_scale) и масштаб облака ТЛО (tlo_scale) не
+выводятся из файла — это параметры съёмки, задаются пользователем. Поэтому
+поля Optional и возвращаются None.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+import laspy
+import numpy as np
+import rasterio
+from pyproj import CRS, Geod
+
+
+@dataclass
+class FailedTile:
+    name: str
+    reason: str
+
+
+@dataclass
+class AfsReport:
+    crs: str
+    extent_area_km2: float
+    resolution_m: float
+    ofp_scale: Optional[str]
+    tiles_total: int
+    tiles_ok: int
+    tiles_failed: int
+    failed_tiles: list[FailedTile] = field(default_factory=list)
+
+
+@dataclass
+class VlsReport:
+    crs: str
+    extent_area_km2: float
+    density_pts_m2: float
+    tlo_scale: Optional[str]
+    tlo_height_range_m: tuple
+    tiles_total: int
+    tiles_ok: int
+    tiles_failed: int
+    failed_tiles: list[FailedTile] = field(default_factory=list)
+
+
+@dataclass
+class MaterialAssessment:
+    afs: Optional[AfsReport] = None
+    vls: Optional[VlsReport] = None
+
+
+def _geod_area_km2(crs: CRS, xmin: float, ymin: float, xmax: float, ymax: float) -> float:
+    """Площадь bbox в кв.км с учётом CRS."""
+    try:
+        if crs is not None and crs.is_geographic:
+            geod = Geod(ellps="WGS84")
+            ring = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
+            area, _ = geod.polygon_area_perimeter(
+                [p[0] for p in ring], [p[1] for p in ring]
+            )
+            return abs(area) / 1e6
+    except Exception:  # noqa: BLE001
+        pass
+    # projected или CRS неизвестна → координаты в метрах, простое произведение сторон
+    return abs((xmax - xmin) * (ymax - ymin)) / 1e6
+
+
+def assess_tiff(path: str) -> AfsReport:
+    """Оценка одного АФС-тайла (GeoTIFF): СК, площадь, разрешение."""
+    with rasterio.open(path) as src:
+        crs = src.crs.to_wkt() if src.crs is not None else ""
+        t = src.transform
+        xres = abs(t.a)
+        yres = abs(t.e)
+        resolution_m = float((xres + yres) / 2.0) if (xres and yres) else float(xres)
+        xmin, ymin, xmax, ymax = src.bounds
+        area = _geod_area_km2(src.crs, xmin, ymin, xmax, ymax)
+    return AfsReport(
+        crs=crs,
+        extent_area_km2=area,
+        resolution_m=resolution_m,
+        ofp_scale=None,
+        tiles_total=1, tiles_ok=1, tiles_failed=0, failed_tiles=[],
+    )
+
+
+def _las_crs(las: laspy.LasData) -> str:
+    try:
+        crs = las.header.parse_crs()  # pyproj.CRS | None
+    except Exception:  # noqa: BLE001
+        crs = None
+    if crs is None:
+        return ""
+    try:
+        return crs.to_wkt()
+    except Exception:  # noqa: BLE001
+        return str(crs)
+
+
+def assess_las(path: str) -> VlsReport:
+    """Оценка одного ВЛС-тайла (LAS): СК, площадь, плотность, диапазон высот ТЛО."""
+    las = laspy.read(path)
+    crs_obj = None
+    try:
+        crs_obj = las.header.parse_crs()
+    except Exception:  # noqa: BLE001
+        crs_obj = None
+    crs = crs_obj.to_wkt() if crs_obj is not None else ""
+    x = np.asarray(las.x)
+    y = np.asarray(las.y)
+    z = np.asarray(las.z)
+    n = int(len(x))
+    if n == 0:
+        return VlsReport(crs=crs, extent_area_km2=0.0, density_pts_m2=0.0,
+                         tlo_scale=None, tlo_height_range_m=(0.0, 0.0),
+                         tiles_total=1, tiles_ok=1, tiles_failed=0, failed_tiles=[])
+    xmin, xmax = float(np.min(x)), float(np.max(x))
+    ymin, ymax = float(np.min(y)), float(np.max(y))
+    area_km2 = _geod_area_km2(crs_obj, xmin, ymin, xmax, ymax)
+    area_m2 = area_km2 * 1e6
+    density = float(n / area_m2) if area_m2 > 0 else 0.0
+    zmin, zmax = float(np.min(z)), float(np.max(z))
+    return VlsReport(
+        crs=crs, extent_area_km2=area_km2, density_pts_m2=density,
+        tlo_scale=None, tlo_height_range_m=(zmin, zmax),
+        tiles_total=1, tiles_ok=1, tiles_failed=0, failed_tiles=[],
+    )
+
+
+def _collect_files(directory: str, exts: list[str]) -> list[str]:
+    d = Path(directory)
+    out = []
+    for ext in exts:
+        out.extend(sorted(str(p) for p in d.glob(f"*{ext}")))
+        out.extend(sorted(str(p) for p in d.glob(f"*{ext.upper()}")))
+    return out
+
+
+def assess_materials(
+    vls_dir: Optional[str] = None,
+    afs_dir: Optional[str] = None,
+    vls_files: Optional[list[str]] = None,
+    afs_files: Optional[list[str]] = None,
+) -> MaterialAssessment:
+    """Оценка каталогов/файлов ВЛС и АФС. Агрегирует тайлы, собирает failed_tiles."""
+    afs_report = None
+    vls_report = None
+
+    # --- АФС (GeoTIFF) ---
+    afs_paths = list(afs_files) if afs_files else (
+        _collect_files(afs_dir, [".tif", ".tiff"]) if afs_dir else []
+    )
+    if afs_paths:
+        ok_total = failed_total = 0
+        first: Optional[AfsReport] = None
+        failed: list[FailedTile] = []
+        for p in afs_paths:
+            try:
+                rep = assess_tiff(p)
+                ok_total += 1
+                if first is None:
+                    first = rep
+            except Exception as e:  # noqa: BLE001
+                failed_total += 1
+                failed.append(FailedTile(os.path.basename(p), str(e)))
+        if first is not None:
+            afs_report = AfsReport(
+                crs=first.crs, extent_area_km2=first.extent_area_km2,
+                resolution_m=first.resolution_m, ofp_scale=None,
+                tiles_total=len(afs_paths), tiles_ok=ok_total,
+                tiles_failed=failed_total, failed_tiles=failed,
+            )
+
+    # --- ВЛС (LAS) ---
+    vls_paths = list(vls_files) if vls_files else (
+        _collect_files(vls_dir, [".las", ".laz"]) if vls_dir else []
+    )
+    if vls_paths:
+        ok_total = failed_total = 0
+        first: Optional[VlsReport] = None
+        failed: list[FailedTile] = []
+        for p in vls_paths:
+            try:
+                rep = assess_las(p)
+                ok_total += 1
+                if first is None:
+                    first = rep
+            except Exception as e:  # noqa: BLE001
+                failed_total += 1
+                failed.append(FailedTile(os.path.basename(p), str(e)))
+        if first is not None:
+            vls_report = VlsReport(
+                crs=first.crs, extent_area_km2=first.extent_area_km2,
+                density_pts_m2=first.density_pts_m2, tlo_scale=None,
+                tlo_height_range_m=first.tlo_height_range_m,
+                tiles_total=len(vls_paths), tiles_ok=ok_total,
+                tiles_failed=failed_total, failed_tiles=failed,
+            )
+
+    return MaterialAssessment(afs=afs_report, vls=vls_report)

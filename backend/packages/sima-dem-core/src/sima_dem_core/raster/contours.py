@@ -21,18 +21,31 @@ def generate_contours(
     fixed_levels: list[float] | None = None,
     create_3d: bool = True,
     nodata: float | None = None,
+    driver: str = "GPKG",
 ) -> str:
+    """Сгенерировать горизонтали (изолинии) из ЦМР.
+
+    Args:
+        driver: "GPKG" (по умолчанию) или "ESRI Shapefile" для вывода .shp
+                (требование Q3 — горизонтали .shp). Имя поля обрезается до 10
+                символов для Shapefile (ограничение DBF).
+    """
     ds = gdal.Open(raster_path)
     if ds is None:
         raise FileNotFoundError(f"Cannot open raster: {raster_path}")
 
     band = ds.GetRasterBand(1)
-    driver = ogr.GetDriverByName("GPKG")
+    ogr_driver = ogr.GetDriverByName(driver)
+    if ogr_driver is None:
+        raise ValueError(f"Неизвестный OGR-драйвер: {driver}")
     if os.path.exists(output_path):
-        driver.DeleteDataSource(output_path)
+        ogr_driver.DeleteDataSource(output_path)
 
-    ds_out = driver.CreateDataSource(output_path)
+    ds_out = ogr_driver.CreateDataSource(output_path)
     layer_name = os.path.splitext(os.path.basename(output_path))[0]
+    if driver == "ESRI Shapefile":
+        layer_name = layer_name[:10]
+        field_name = field_name[:10]
     srs = None
     if crs_wkt:
         srs = osr.SpatialReference()

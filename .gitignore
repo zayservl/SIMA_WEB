@@ -34,3 +34,6 @@ backend/dist/backend/.coverage
 *.egg-info/
 backend/.coverage
 backend/output/
+Архитектурная концепция.pdf
+.gitignore
+Концептуализация работ на Q3 202.pdf
