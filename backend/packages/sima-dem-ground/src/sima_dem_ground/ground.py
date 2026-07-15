@@ -182,7 +182,7 @@ class GroundProcessing:
         if not check.is_ground:
             pipeline += _elm_outlier_stages()
             pipeline.append(self.smrf.to_cut_dict() if self.cut_smrf else self.smrf.to_dict())
-            pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
+        pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         min_cfg = RasterOutputConfig(output_type="min", data_type=self.raster_out.data_type,
                                      gdaldriver=self.raster_out.gdaldriver)
