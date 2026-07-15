@@ -181,7 +181,7 @@ def step_aspect(base_raster: str, crs: str, out_dir: str, res: float) -> str:
 def step_tpi(base_raster: str, params: ReliefParams, out_dir: str, crs: str, resolution: float) -> str:
     return calculate_tpi(
         dem_path=base_raster, crs=crs, output_folder=out_dir,
-        input_res=resolution, res=resolution, config=map_tpi_config(params.derivatives),
+        input_res=resolution, res=10.0, config=map_tpi_config(params.derivatives),
     )
 
 

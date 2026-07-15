@@ -138,7 +138,7 @@ def map_smrf_config(p: SmrfParams) -> SMRFConfig:
 
 def map_tpi_config(d: DerivativesParams) -> TPIConfig:
     radii = d.tpi_radii or [270, 810, 2430]
-    return TPIConfig(radii_m=list(radii))
+    return TPIConfig(radii_m=list(radii), res=10.0)
 
 
 def filter_kwargs(p: ReliefParams) -> dict:
