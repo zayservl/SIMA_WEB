@@ -43,10 +43,14 @@ class FillConfig:
     fill_holes: заполнять только внутренние дырки (не экстраполировать края).
     max_search_distance: радиус поиска соседей для интерполяции.
     smoothing_iterations: сглаживаний при интерполяции.
+    fallback_to_min_z: если True — пиксели без Ground-точек заполняются
+        минимальным Z из всех точек LAS в этой ячейке (proxy для земли
+        под пологом). Согласно АЗ — нижние значения из LAS.
     """
     fill_holes: bool = True
     max_search_distance: int = 100
     smoothing_iterations: int = 0
+    fallback_to_min_z: bool = True
 
 
 @dataclass
@@ -70,7 +74,7 @@ class GroundProcessing:
         interpol_dist: int = 100,
         cut_smrf: bool = False,
         save_ground_las: bool = False,
-        is_CRS_EPSG: bool = True,
+        is_CRS_EPSG: Optional[bool] = None,
         smrf: Optional[SMRFConfig] = None,
         fill: Optional[FillConfig] = None,
         raster_out: Optional[RasterOutputConfig] = None,
@@ -82,13 +86,31 @@ class GroundProcessing:
         self.resolution = resolution
         self.crs = crs
         self.interpolate = interpolate
-        self.is_CRS_EPSG = is_CRS_EPSG
+        self.is_CRS_EPSG = is_CRS_EPSG if is_CRS_EPSG is not None else self._detect_crs_is_epsg(crs)
         self.cut_smrf = cut_smrf
         self.save_ground_las = save_ground_las
 
         self.smrf = smrf or SMRFConfig()
         self.fill = fill or FillConfig(max_search_distance=interpol_dist)
         self.raster_out = raster_out or RasterOutputConfig()
+
+    @staticmethod
+    def _detect_crs_is_epsg(crs: str) -> bool:
+        """Auto-detect if CRS is an EPSG code (vs WKT or LOCAL_CS).
+
+        AOI crop filter requires EPSG-based CRS for polygon reprojection.
+        WKT/LOCAL_CS CRS should skip the crop step to avoid projection errors.
+        """
+        if not crs:
+            return False
+        crs_upper = crs.upper().strip()
+        if crs_upper.startswith("EPSG:"):
+            return True
+        if "LOCAL_CS" in crs_upper:
+            return False
+        if "PROJCS" in crs_upper or "GEOGCS" in crs_upper:
+            return True
+        return False
 
     @staticmethod
     def execute(pipeline: list) -> None:
@@ -100,6 +122,12 @@ class GroundProcessing:
         if self.cut_smrf:
             smrf_stage = {"type": "filters.smrf", "threshold": 3,
                           "returns": self.smrf.returns}
+
+        # Согласно АЗ: пропущенные значения интерполируются IDW (inverse-distance weighting).
+        # PDAL writers.gdal output_type="idw" выполняет IDW-интерполяцию растра.
+        output_type = self.raster_out.output_type
+        if output_type == "mean":
+            output_type = "idw"
 
         pipeline: list = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
@@ -113,7 +141,7 @@ class GroundProcessing:
             {"type": "filters.sample", "radius": self.resolution},
             {"type": "filters.range", "limits": "Classification[2:2]"},
             {"filename": raster, "gdaldriver": self.raster_out.gdaldriver,
-             "resolution": self.resolution, "output_type": self.raster_out.output_type,
+             "resolution": self.resolution, "output_type": output_type,
              "type": "writers.gdal", "data_type": self.raster_out.data_type},
         ]
         if self.aoi and self.is_CRS_EPSG:
@@ -122,6 +150,95 @@ class GroundProcessing:
             ground_las = out_path or (input_path.rsplit(".", 1)[0] + "_ground.las")
             pipeline.insert(7, {"type": "writers.las", "filename": ground_las})
         GroundProcessing.execute(pipeline)
+
+    def _fill_from_min_z(self, input_path: str, raster: str) -> None:
+        """Заполнить дыры в DTM минимальным Z из всех точек LAS.
+
+        Согласно АЗ: где нет Ground-точек (под плотным пологом), берутся
+        нижние значения Z из LAS как proxy для поверхности рельефа.
+        Строится растр output_type="min" из всех точек, и его значения
+        вставляются в пиксели где DTM имеет nodata.
+        """
+        min_z_raster = raster.replace("_dem.tif", "_minz_fallback.tif")
+        pipeline: list = [
+            {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
+            {"type": "filters.assign", "value": [
+                "NumberOfReturns = 1 WHERE (NumberOfReturns == 0)",
+                "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]},
+            {"type": "filters.elm"},
+            {"type": "filters.outlier"},
+            {"filename": min_z_raster, "gdaldriver": self.raster_out.gdaldriver,
+             "resolution": self.resolution, "output_type": "min",
+             "type": "writers.gdal", "data_type": self.raster_out.data_type},
+        ]
+        if self.aoi and self.is_CRS_EPSG:
+            pipeline.insert(2, {"type": "filters.crop", "polygon": self.aoi})
+        GroundProcessing.execute(pipeline)
+
+        # Выровнять min-Z растр к DTM через gdal.Warp (одинаковый размер/transform)
+        aligned_min_z = min_z_raster.replace("_fallback.tif", "_aligned.tif")
+        try:
+            with rasterio.open(raster) as ref:
+                ref_transform = ref.transform
+                ref_width = ref.width
+                ref_height = ref.height
+                ref_crs = ref.crs
+            gdal.Warp(aligned_min_z, min_z_raster,
+                      dstSRS=ref_crs,
+                      xRes=self.resolution, yRes=self.resolution,
+                      outputBounds=[ref_transform[2], ref_transform[5] - ref_height * self.resolution,
+                                    ref_transform[2] + ref_width * self.resolution, ref_transform[5]],
+                      resampleAlg="bilinear")
+            min_z_source = aligned_min_z
+        except Exception:
+            min_z_source = min_z_raster
+
+        with rasterio.open(raster) as src:
+            profile = src.profile
+            dtm = src.read(1)
+            dtm_nodata = src.nodata
+            dtm_mask = src.read_masks(1)
+
+        with rasterio.open(min_z_source) as src:
+            min_z = src.read(1)
+            min_z_nodata = src.nodata
+
+        if dtm_nodata is None:
+            return
+
+        if dtm.shape != min_z.shape:
+            min_h = min(dtm.shape[0], min_z.shape[0])
+            min_w = min(dtm.shape[1], min_z.shape[1])
+            dtm_view = dtm[:min_h, :min_w]
+            min_z_view = min_z[:min_h, :min_w]
+            dtm_mask_view = dtm_mask[:min_h, :min_w]
+        else:
+            dtm_view = dtm
+            min_z_view = min_z
+            dtm_mask_view = dtm_mask
+
+        dtm_holes = (dtm_view == dtm_nodata) | (dtm_mask_view == 0)
+        min_z_valid = (min_z_view != min_z_nodata) if min_z_nodata is not None else np.ones_like(min_z_view, bool)
+        fill_mask = dtm_holes & min_z_valid
+
+        if not np.any(fill_mask):
+            for f in (min_z_raster, aligned_min_z):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+            return
+
+        dtm_view[fill_mask] = min_z_view[fill_mask]
+
+        with rasterio.open(raster, "w", **profile) as dest:
+            dest.write_band(1, dtm)
+
+        for f in (min_z_raster, aligned_min_z):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
     def _save_ground(self, input_path: str, raster: str, out_path: Optional[str]) -> None:
         pipeline: list = [
@@ -208,6 +325,8 @@ class GroundProcessing:
             self._save_ground(path, raster, out_path)
         else:
             self._get_ground(path, raster, out_path)
+        if self.fill.fallback_to_min_z:
+            self._fill_from_min_z(path, raster)
         if self.interpolate:
             self._interpolate(raster)
         self.raster.append(raster)

@@ -7,6 +7,9 @@ from pathlib import Path
 
 from sima_dem_pipeline.pipeline import ReliefPipeline, PipelineConfig
 
+# CRS для синтетических unit-тестов (произвольная UTM-зона — данные синтетические).
+TEST_UNIT_CRS = "EPSG:32642"
+
 
 def _make_test_las(path: str, n: int = 500) -> str:
     """Создать тестовый LAS с ground-точками."""
@@ -30,7 +33,7 @@ class TestPipelineConfig:
             las_catalog="/tmp/las",
             output_dir="/tmp/out",
             resolution=1.0,
-            crs="EPSG:32642",
+            crs=TEST_UNIT_CRS,
         )
         assert config.filter_type is None
         assert config.do_tpi is False
@@ -49,7 +52,7 @@ class TestReliefPipeline:
             las_catalog=str(las_dir),
             output_dir=str(out_dir),
             resolution=1.0,
-            crs="EPSG:32642",
+            crs=TEST_UNIT_CRS,
             save_ground_las=False,
         )
         pipeline = ReliefPipeline(config)
@@ -66,7 +69,7 @@ class TestReliefPipeline:
             las_catalog=str(las_dir),
             output_dir=str(out_dir),
             resolution=1.0,
-            crs="EPSG:32642",
+            crs=TEST_UNIT_CRS,
             filter_type="manual",
             z_min=0.0,
             z_max=200.0,

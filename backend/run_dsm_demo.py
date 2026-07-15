@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Запуск построения ЦМР/DTM/DSM на двух датасетах.
 
-Все параметры инкапсулированы. CRS извлекается из эталонного TIFF/АФС.
+Все параметры инкапсулированы в DemoConfig. CRS извлекается из эталонного TIFF/АФС.
 Интерполяция — только внутренних дырок, без экстраполяции краёв.
 Склоны/экспозиции строятся по сглаженной DTM.
+Пути к данным настраиваются через переменные окружения SIMA_DATA_DIR / SIMA_OUTPUT_DIR.
 """
 
 import os, sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 import rasterio, numpy as np
 
 backend = Path(__file__).parent
@@ -22,22 +25,72 @@ from sima_dem_core.raster.smooth import gauss_smooth
 from sima_dem_core.raster.tpi import calculate_tpi, TPIConfig
 from sima_dem_core.check_classification import CheckClassification
 
-SIMA = Path("/Users/sergeyzay/Documents/НЕДРА/СИМА")
-DEMO = SIMA / "23_04_12_digital_elevation_1-46-315" / "demo_data"
-TEST = SIMA / "test_data"
-OUT = SIMA / "sima-web" / "backend" / "output"
+
+# ── Конфигурация путей (через env, без хардкода) ──────────────────────────
+
+_SIMA_ROOT = Path(os.environ.get(
+    "SIMA_DATA_DIR",
+    str(Path(__file__).resolve().parent.parent.parent),  # ../..
+))
+_OUTPUT_ROOT = Path(os.environ.get(
+    "SIMA_OUTPUT_DIR",
+    str(backend / "output"),
+))
+
+DEMO_DIR = _SIMA_ROOT / "23_04_12_digital_elevation_1-46-315" / "demo_data"
+TEST_DIR = _SIMA_ROOT / "test_data"
+OUT_DIR = _OUTPUT_ROOT
 
 
-def extract_crs(tif_path):
+# ── Конфигурация обработки (все параметры инкапсулированы) ────────────────
+
+@dataclass
+class DemoProcessingConfig:
+    """Все параметры построения ЦМР/DTM/DSM — без хардкода."""
+
+    # Разрешение выходного растра (м)
+    resolution: float = 1.0
+
+    # SMRF — Simple Morphological Filter
+    smrf: SMRFConfig = field(default_factory=SMRFConfig)
+
+    # Интерполяция дырок (без экстраполяции краёв)
+    interpolate: bool = True
+    fill_holes: bool = True
+    max_search_distance: int = 100
+
+    # Сглаживание (гауссов фильтр)
+    gauss_sigma: float = 2.0
+    gauss_order: int = 0
+    gauss_window: int = 5
+
+    # TPI
+    tpi_res: float = 10.0
+    tpi_config: TPIConfig = field(default_factory=TPIConfig)
+
+    # DSM (ЦМД — все точки, max)
+    build_dsm: bool = True
+    dsm_resolution: float = 1.0
+
+
+def extract_crs(tif_path: str) -> str:
+    """Извлечь CRS из растра как WKT-строку — единый источник истины."""
     with rasterio.open(tif_path) as src:
         return src.crs.to_wkt()
 
 
-def process(name, las_path, crs, out_dir, ref_dsm=None, build_dsm=False):
+def process(name: str, las_path: str, crs: str, out_dir: str,
+            ref_dsm: Optional[str] = None,
+            cfg: Optional[DemoProcessingConfig] = None) -> None:
+    """Построить ЦМР/DTM/DSM с заданными параметрами."""
+    cfg = cfg or DemoProcessingConfig()
     os.makedirs(out_dir, exist_ok=True)
     print(f"\n{'='*60}\nДАТАСЕТ: {name}\n{'='*60}")
     print(f"LAS:   {las_path}")
     print(f"Выход: {out_dir}")
+    print(f"CRS:   {crs[:80]}...")
+    print(f"Параметры: resolution={cfg.resolution}, sigma={cfg.gauss_sigma}, "
+          f"tpi_res={cfg.tpi_res}, build_dsm={cfg.build_dsm}")
 
     if ref_dsm:
         print("\n0. Восстановление абсолютных Z...")
@@ -50,10 +103,12 @@ def process(name, las_path, crs, out_dir, ref_dsm=None, build_dsm=False):
     # 1. DTM (ЦМР — ground, SMRF, интерполяция дырок, без экстраполяции краёв)
     print("\n1. DTM (SMRF + интерполяция дырок)...")
     gp = GroundProcessing(
-        output=out_dir, resolution=1.0, crs=crs,
-        interpolate=True, save_ground_las=False,
-        smrf=SMRFConfig(),  # slope=0.2, window=16, threshold=0.45, scalar=1.2
-        fill=FillConfig(fill_holes=True, max_search_distance=100),
+        output=out_dir, resolution=cfg.resolution, crs=crs,
+        interpolate=cfg.interpolate, save_ground_las=False,
+        smrf=cfg.smrf,
+        fill=FillConfig(fill_holes=cfg.fill_holes,
+                        max_search_distance=cfg.max_search_distance,
+                        fallback_to_min_z=True),
     )
     gp.get_raster(las_path, crs_wkt=crs)
     dtm = gp.raster[0]
@@ -63,32 +118,40 @@ def process(name, las_path, crs, out_dir, ref_dsm=None, build_dsm=False):
     print("2. Сглаживание (с интерполяцией дырок)...")
     stem = Path(dtm).stem.replace("_dem", "")
     smoothed = str(Path(out_dir) / (stem + "_dem_smooth.tif"))
-    gauss_smooth(dtm, smoothed, sigma=2.0, order=0, window_size=5,
-                 fill_holes=True, max_search_distance=100)
+    gauss_smooth(dtm, smoothed,
+                 sigma=cfg.gauss_sigma, order=cfg.gauss_order,
+                 window_size=cfg.gauss_window,
+                 fill_holes=cfg.fill_holes,
+                 max_search_distance=cfg.max_search_distance)
     print(f"   {smoothed}")
 
     # 3. Уклоны — по сглаженной DTM (#4)
     print("3. Уклоны (по сглаженной DTM)...")
     cp = CurvatureProcessing()
-    slope = cp.calculate_slope(smoothed, crs, 1.0, 1.0, out_dir)
+    slope = cp.calculate_slope(smoothed, crs,
+                               cfg.resolution, cfg.resolution, out_dir)
     print(f"   {slope}")
 
     # 4. Экспозиции — по сглаженной DTM (#4)
     print("4. Экспозиции (по сглаженной DTM)...")
-    aspect = cp.calculate_aspect(smoothed, crs, 1.0, 1.0, out_dir)
+    aspect = cp.calculate_aspect(smoothed, crs,
+                                  cfg.resolution, cfg.resolution, out_dir)
     print(f"   {aspect}")
 
     # 5. TPI — по сглаженной DTM
     print("5. TPI (по сглаженной DTM)...")
-    tpi = calculate_tpi(smoothed, crs, out_dir, 1.0, 10.0, TPIConfig())
+    tpi = calculate_tpi(smoothed, crs, out_dir,
+                        cfg.resolution, cfg.tpi_res, cfg.tpi_config)
     print(f"   {tpi}")
 
     # 6. DSM (ЦМД — все точки, max)
-    if build_dsm:
+    if cfg.build_dsm:
         print("6. DSM (все точки, max)...")
         builder = DSMBuilder(
             output=out_dir, crs=crs,
-            config=DSMConfig(resolution=1.0, interpolate=True, fill_holes=True),
+            config=DSMConfig(resolution=cfg.dsm_resolution,
+                             interpolate=cfg.interpolate,
+                             fill_holes=cfg.fill_holes),
         )
         dsm_path = builder.build(las_path, crs_wkt=crs)
         print(f"   {dsm_path}")
@@ -97,7 +160,7 @@ def process(name, las_path, crs, out_dir, ref_dsm=None, build_dsm=False):
     print(f"\n--- Результаты: {name} ---")
     files = [("DTM", dtm), ("Сглаженная", smoothed), ("Уклоны", slope),
              ("Экспозиции", aspect), ("TPI", tpi)]
-    if build_dsm:
+    if cfg.build_dsm:
         files.append(("DSM", dsm_path))
     for label, path in files:
         try:
@@ -132,26 +195,28 @@ def process(name, las_path, crs, out_dir, ref_dsm=None, build_dsm=False):
 
 def main():
     print("=" * 60)
-    print("СИМА — ЦМР/DTM/DSM (параметры инкапсулированы, без хардкода)")
+    print("СИМА — ЦМР/DTM/DSM (параметры в DemoProcessingConfig, пути через env)")
     print("=" * 60)
 
-    # demo_data
+    cfg = DemoProcessingConfig()
+
+    # demo_data — CRS из АФС (00000100.tif)
     process("demo_data (pt000100.las)",
-            str(DEMO / "pt000100.las"),
-            extract_crs(str(DEMO / "00000100.tif")),
-            str(OUT / "demo_data"),
-            build_dsm=True)
+            str(DEMO_DIR / "pt000100.las"),
+            extract_crs(str(DEMO_DIR / "00000100.tif")),
+            str(OUT_DIR / "demo_data"),
+            cfg=cfg)
 
-    # test_data
+    # test_data — CRS из эталонного DSM
     process("test_data (P-42-041-239-g, TLO + восстановление)",
-            str(TEST / "P-42-041-239-g_ground_TLO.las"),
-            extract_crs(str(TEST / "P-42-041-239-g_DSM.tif")),
-            str(OUT / "test_data"),
-            ref_dsm=str(TEST / "P-42-041-239-g_DSM.tif"),
-            build_dsm=True)
+            str(TEST_DIR / "P-42-041-239-g_ground_TLO.las"),
+            extract_crs(str(TEST_DIR / "P-42-041-239-g_DSM.tif")),
+            str(OUT_DIR / "test_data"),
+            ref_dsm=str(TEST_DIR / "P-42-041-239-g_DSM.tif"),
+            cfg=cfg)
 
-    print(f"\n{'='*60}\nВСЕ РЕЗУЛЬТАТЫ: {OUT}\n{'='*60}")
-    for dp, dn, fns in os.walk(OUT):
+    print(f"\n{'='*60}\nВСЕ РЕЗУЛЬТАТЫ: {OUT_DIR}\n{'='*60}")
+    for dp, dn, fns in os.walk(OUT_DIR):
         for f in sorted(fns):
             if f.endswith((".tif", ".las")):
                 p = os.path.join(dp, f)

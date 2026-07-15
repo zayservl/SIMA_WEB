@@ -49,8 +49,10 @@ def restore_absolute_las(
         dsm_nodata = dsm.nodata
         dsm_inv = ~dsm_transform
 
-    # Для каждой точки: получить Z из DSM
-    rows, cols = dsm_inv * (x, y)
+    # Для каждой точки: получить Z из DSM.
+    # ВНИМАНИЕ: rasterio `~transform * (x, y)` возвращает (col, row),
+    # а НЕ (row, col). Присваиваем в правильном порядке.
+    cols, rows = dsm_inv * (x, y)
     rows = rows.astype(int)
     cols = cols.astype(int)
 

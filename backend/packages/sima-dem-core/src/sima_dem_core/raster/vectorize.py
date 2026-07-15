@@ -54,7 +54,7 @@ def bin_to_polys(path: str, outfolder: str) -> str:
     threshold = ar == 1
 
     all_polygons = []
-    for geom, value in features.shapes(mask.astype(np.int16), mask=(mask > 0), transform=transform):
+    for geom, value in features.shapes(threshold.astype(np.int16), mask=threshold, transform=transform):
         all_polygons.append(shp_shape(geom))
 
     if not all_polygons:

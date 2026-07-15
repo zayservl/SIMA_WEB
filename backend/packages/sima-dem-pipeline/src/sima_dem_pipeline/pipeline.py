@@ -47,6 +47,7 @@ class PipelineConfig:
     interpolate: bool = True
     fill_holes: bool = True
     interpol_dist: int = 100
+    fallback_to_min_z: bool = True
 
     # Сглаживание
     gauss_sigma: Optional[float] = None
@@ -132,7 +133,11 @@ class ReliefPipeline:
             interpol_dist=self.config.interpol_dist,
             save_ground_las=self.config.save_ground_las,
             smrf=self.config.smrf,
-            fill=FillConfig(fill_holes=self.config.fill_holes, max_search_distance=self.config.interpol_dist),
+            fill=FillConfig(
+                fill_holes=self.config.fill_holes,
+                max_search_distance=self.config.interpol_dist,
+                fallback_to_min_z=self.config.fallback_to_min_z,
+            ),
         )
 
         curvature = CurvatureProcessing()

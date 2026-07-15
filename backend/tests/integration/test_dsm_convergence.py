@@ -14,7 +14,7 @@ import numpy as np
 import rasterio
 import laspy
 
-from tests.conftest import TLO_LAS, REFERENCE_DSM, TEST_CRS_WKT, TEST_DATA_DIR
+from tests.conftest import TLO_LAS, REFERENCE_DSM, get_test_crs_wkt, TEST_DATA_DIR
 from tests.fixtures.restore_las import restore_absolute_las
 from sima_dem_ground.ground import GroundProcessing
 
@@ -29,6 +29,11 @@ pytestmark = pytest.mark.skipif(
 class TestDSMIntegration:
 
     @pytest.fixture(scope="class")
+    def crs_wkt(self) -> str:
+        """CRS извлекается из эталонного DSM — единый источник истины."""
+        return get_test_crs_wkt()
+
+    @pytest.fixture(scope="class")
     def restored_las(self, tmp_path_factory):
         """Восстановить LAS с абсолютными Z из TLO + эталонного DSM."""
         out_dir = tmp_path_factory.mktemp("restore")
@@ -37,18 +42,18 @@ class TestDSMIntegration:
         return out_las
 
     @pytest.fixture(scope="class")
-    def built_dsm(self, restored_las, tmp_path_factory):
+    def built_dsm(self, restored_las, crs_wkt, tmp_path_factory):
         """Построить ЦМР (DTM) из восстановленного LAS — только ground-точки."""
         out_dir = tmp_path_factory.mktemp("dsm")
         gp = GroundProcessing(
             output=str(out_dir),
             resolution=1.0,
-            crs=TEST_CRS_WKT,
+            crs=crs_wkt,
             interpolate=True,
             interpol_dist=100,
             save_ground_las=False,
         )
-        gp.get_raster(restored_las, crs_wkt=TEST_CRS_WKT)
+        gp.get_raster(restored_las, crs_wkt=crs_wkt)
         return gp.raster[0]
 
     def test_dsm_shape_matches_reference(self, built_dsm):
