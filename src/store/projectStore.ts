@@ -16,7 +16,7 @@ export const defaultReliefParams: ReliefParams = {
   },
   heights: { enabled: false, source: 'las', step: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
-  target_crs: 'EPSG:32637',
+  target_crs: '',
   deterministic: true, seed: 42,
 }
 
@@ -70,7 +70,7 @@ const demoProject: Project = {
   created_at: '2026-06-01T10:00:00Z',
   updated_at: '2026-07-01T12:00:00Z',
   status: 'done',
-  scene: { id: 'scene-001', afs_dir: '/data/demo/afs', vls_dir: '/data/demo/vls', target_crs: 'EPSG:32637', reproject: true, deterministic: true, seed: 42 },
+  scene: { id: 'scene-001', afs_dir: '/data/demo/afs', vls_dir: '/data/demo/vls', target_crs: '', reproject: true, deterministic: true, seed: 42 },
 }
 
 export const useProjectStore = create<ProjectStore>((set) => ({
@@ -78,11 +78,11 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   assessment: {
     'demo-001': {
       afs: {
-        crs: 'EPSG:32637', extent_area_km2: 1.0, resolution_m: 0.14, ofp_scale: '1:1400',
+        crs: '', extent_area_km2: 1.0, resolution_m: 0.14, ofp_scale: '1:1400',
         tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
       },
       vls: {
-        crs: 'EPSG:32637', extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
+        crs: '', extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
         tlo_height_range_m: [22.08, 1031.87],
         tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
       },

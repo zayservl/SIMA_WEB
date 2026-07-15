@@ -22,3 +22,19 @@ dist-ssr/
 # Logs
 *.log
 npm-debug.log*
+
+# Python venv
+backend/.venv/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/htmlcov/
+backend/*.egg-info/
+backend/build/
+backend/dist/backend/.coverage
+*.egg-info/
+backend/.coverage
+backend/output/
+backend/output_relief_demo/
+Архитектурная концепция.pdf
+.gitignore
+Концептуализация работ на Q3 202.pdf

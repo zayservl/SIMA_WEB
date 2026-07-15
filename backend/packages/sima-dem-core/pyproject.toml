@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sima-dem-core"
+version = "0.1.0"
+description = "СИМА — ядро: фильтры LAS, растровые утилиты, обрезка, высоты, кривизна"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+    "laspy>=2.0",
+    "rasterio>=1.2",
+    "shapely>=1.7",
+    "pyproj>=3.0",
+    "opencv-python>=4.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

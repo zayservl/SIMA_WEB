@@ -13,7 +13,7 @@ const defaultSettings: GlobalSettings = {
   results_dir: '',
   default_season: 'summer',
   default_satellite: 'aerial',
-  default_target_crs: 'EPSG:32637',
+  default_target_crs: '',
   deterministic: {
     enabled: true,
     seed: 42,
