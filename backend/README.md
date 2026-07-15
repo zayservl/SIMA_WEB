@@ -1,36 +1,44 @@
 # СИМА — Backend DEM Library
 
-Вычислительная библиотека ЦМР/ЦМД/рельефа. Порт из legacy QGIS-плагина в чистый Python.
-Без QGIS, PyQt5. С использованием GDAL, PDAL, rasterio, laspy, scipy, numpy.
+Вычислительная библиотека ЦМР/ЦММ/рельефа. Порт из legacy QGIS-плагина в чистый Python.
+Без QGIS, PyQt5. С использованием GDAL, PDAL, rasterio, laspy, scipy, numpy, opencv.
 
-## Структура — 4 отдельных устанавливаемых пакета
+## Структура — 4 пакета
 
 ```
 backend/
 ├── packages/
-│   ├── sima-dem-core/          # Фильтры, растры, обрезка, высоты, кривизна
+│   ├── sima-dem-core/            # Фильтры, растры, обрезка, высоты, кривизна
 │   │   └── src/sima_dem_core/
 │   │       ├── check_classification.py
 │   │       ├── crop.py
-│   │       ├── curvature.py          # slope/aspect
-│   │       ├── height.py             # отметки высот
-│   │       ├── filters/              # 4 фильтра LAS
-│   │       └── raster/               # smooth, median, tpi, vectorize
-│   ├── sima-dem-ground/        # ЦМР (GroundProcessing, SMRF)
+│   │       ├── curvature.py            # slope/aspect (gdal.DEMProcessing)
+│   │       ├── height.py               # отметки высот (LAS ground / DEM grid)
+│   │       ├── filters/                # 4 фильтра LAS: manual, stat, range, outlier
+│   │       └── raster/                 # smooth (gauss), median, tpi (cv2.blur), vectorize, contours
+│   ├── sima-dem-ground/         # ЦМР (GroundProcessing, SMRF, IDW, fillnodata)
 │   │   └── src/sima_dem_ground/
-│   │       └── ground.py             # SMRFConfig, FillConfig, GroundProcessing
-│   ├── sima-dem-dsm/           # ЦМД (DSMBuilder)
+│   │       └── ground.py               # SMRFConfig, FillConfig, RasterOutputConfig, GroundProcessing
+│   ├── sima-dem-dsm/            # ЦММ (DSMBuilder, output_type=max)
 │   │   └── src/sima_dem_dsm/
-│   │       └── dsm.py                # DSMConfig, DSMBuilder
-│   └── sima-dem-pipeline/     # Оркестрация
-│       └── src/sima_dem_pipeline/
-│           └── pipeline.py          # PipelineConfig, ReliefPipeline
+│   │       └── dsm.py                  # DSMConfig, DSMBuilder
+│   └── sima-relief-service/     # Сервисный слой: оркестрация, статусы, сессии, оценка материалов
+│       └── src/sima_relief_service/
+│           ├── contract.py             # ReliefParams / ReliefRequest / DsmParams / SmrfParams / ...
+│           ├── service.py              # ReliefService.run() — конвейер по тайлам с трекингом статусов
+│           ├── steps.py               # step_crop / step_filter / step_dtm / step_dsm / step_smooth / ...
+│           ├── assessment.py           # assess_materials — оценка ВЛС/АФС (СК, разрешение, плотность)
+│           ├── status.py               # Job / Tile / TileStep / OutputArtifact
+│           ├── storage.py              # Storage (LocalFS → S3) + Session
+│           ├── determinism.py          # DeterminismContext (seed env vars)
+│           ├── tin.py                  # TIN → DXF (scipy Delaunay)
+│           └── shp_io.py               # OGR shapefile writer
 ├── tests/
-│   ├── unit/                  # 34 unit-теста
-│   ├── integration/           # 7 интеграционных тестов
+│   ├── unit/                    # Unit-тесты (56 тестов)
+│   ├── integration/             # Интеграционные тесты (требуют test_data/)
 │   └── conftest.py
-├── run_dsm_demo.py            # Скрипт запуска на двух датасетах
-├── sima_dsm_demo.ipynb        # Jupyter notebook для интерактивного расчёта
+├── relief_demo.ipynb            # Единый demo-ноутбук сервиса рельефа
+├── run_dsm_demo.py              # Скрипт запуска ЦМР/ЦММ на двух датасетах
 └── pyproject.toml
 ```
 
@@ -44,12 +52,12 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 export PATH="/opt/homebrew/bin:$PATH"
-pip install numpy scipy laspy rasterio shapely pyproj
+pip install numpy scipy laspy rasterio shapely pyproj opencv-python
 pip install gdal pdal
 pip install -e packages/sima-dem-core
 pip install -e packages/sima-dem-ground
 pip install -e packages/sima-dem-dsm
-pip install -e packages/sima-dem-pipeline
+pip install -e packages/sima-relief-service
 pip install pytest pytest-cov
 ```
 
@@ -60,98 +68,133 @@ sudo apt install gdal-bin libgdal-dev pdal
 conda create -n sima python=3.12
 conda activate sima
 conda install gdal pdal
-pip install numpy scipy laspy rasterio shapely pyproj
+pip install numpy scipy laspy rasterio shapely pyproj opencv-python
 pip install -e packages/sima-dem-core
 pip install -e packages/sima-dem-ground
 pip install -e packages/sima-dem-dsm
-pip install -e packages/sima-dem-pipeline
+pip install -e packages/sima-relief-service
 ```
 
 ## Запуск тестов
 
 ```bash
 cd backend
-pytest tests/ --cov --cov-report=term-missing
+pytest tests/ --no-cov -q          # без покрытия
+pytest tests/ --cov --cov-report=term-missing  # с покрытием
 ```
 
-## Интерактивный запуск (Jupyter)
+## Demo-ноутбук
 
 ```bash
 cd backend
-jupyter notebook sima_dsm_demo.ipynb
+jupyter notebook relief_demo.ipynb
 ```
 
-В ячейке 2 задать `DATASET = 'demo'` или `'test'` и параметры расчёта.
+Ноутбук поддерживает два датасета (`DATASET = 'demo'` или `'test'`) и выполняет полный
+конвейер: оценка материалов → ЦМР → ЦММ → сглаживание → уклон/экспозиция/TPI →
+горизонтали/отметки высот/TIN → визуализация → сравнение с эталоном.
 
-## Скрипт запуска на двух датасетах
+## Сервис рельефа (sima-relief-service)
 
-```bash
-cd backend
-source .venv/bin/activate
-export PATH="/opt/homebrew/bin:$PATH"
-python run_dsm_demo.py
+### Конвейер «Анализ рельефа» (Q3)
+
+```
+crop → filter → ЦМР (DTM) → ЦММ (DSM) → smooth → slope/aspect/TPI → contours/TIN → heights
 ```
 
-## API — инкапсулированные параметры
+### Параметры (ReliefParams)
 
-Все параметры в dataclass-конфигах, без хардкода:
+| Параметр | Тип | Default | Описание |
+|---|---|---|---|
+| `target_crs` | str | "" | Целевая СК (Q3 «СК») |
+| `filter_method` | str | "smrf" | Метод фильтрации: manual/stat/range/outlier/smrf |
+| `smrf` | SmrfParams | defaults | SMRF: slope=0.2, window=16, threshold=0.45, scalar=1.2 |
+| `smoothing` | SmoothingParams | disabled | Гаусс-сглаживание: sigma=2.0, order=0, window=5 |
+| `dsm` | DsmParams | disabled | ЦММ (DSM): output_type=max, interpolate=True |
+| `derivatives` | DerivativesParams | defaults | Уклон/экспозиция/TPI + интерполяция дырок |
+| `vectors` | VectorsParams | defaults | Горизонтали [0.5, 2, 5, 10] м + TIN |
+| `heights` | HeightsParams | disabled | Отметки высот: source=las, step=10 |
+| `deterministic` | bool | False | Детерминизм (seed) |
+
+### Выходные артефакты
+
+| Артефакт | Формат | Q3 |
+|---|---|---|
+| ЦМР (DTM) | GeoTIFF (IDW) | ✅ |
+| ЦММ (DSM) | GeoTIFF (max) | ✅ |
+| Карта уклонов | GeoTIFF | ✅ |
+| Карта экспозиции | GeoTIFF | ✅ |
+| TPI | GeoTIFF | ✅ |
+| Отметки высот | Shapefile | ✅ |
+| Горизонтали | Shapefile (0.5/2/5/10 м) | ✅ |
+| TIN | DXF | ✅ |
+
+### API
 
 ```python
-from sima_dem_ground.ground import GroundProcessing, SMRFConfig, FillConfig
-from sima_dem_dsm.dsm import DSMBuilder, DSMConfig
-from sima_dem_core.raster.tpi import TPIConfig
-
-# ЦМР (DTM)
-gp = GroundProcessing(
-    output="/tmp/output",
-    resolution=1.0,
-    crs="EPSG:32642",
-    interpolate=True,
-    smrf=SMRFConfig(slope=0.2, window=16, threshold=0.45, scalar=1.2),
-    fill=FillConfig(fill_holes=True, max_search_distance=100),
+from sima_relief_service import (
+    ReliefService, ReliefRequest, ReliefParams, TileInput,
+    SmrfParams, SmoothingParams, DsmParams,
+    DerivativesParams, VectorsParams, HeightsParams,
 )
-gp.get_raster("input.las", crs_wkt="EPSG:32642")
 
-# ЦМД (DSM)
-builder = DSMBuilder(
-    output="/tmp/output",
-    crs="EPSG:32642",
-    config=DSMConfig(resolution=1.0, output_type="max", interpolate=True, fill_holes=True),
+params = ReliefParams(
+    target_crs="EPSG:32640",
+    smoothing=SmoothingParams(enabled=True, sigma=2.0),
+    dsm=DsmParams(enabled=True),
+    derivatives=DerivativesParams(slopes=True, aspect=True, tpi=True),
+    vectors=VectorsParams(horizontals=[0.5, 2.0, 5.0, 10.0], tin=True),
+    heights=HeightsParams(enabled=True, source="las", step=10),
 )
-dsm_path = builder.build("input.las")
+request = ReliefRequest(
+    params=params, project_id="demo", resolution=1.0,
+    tiles=[TileInput(name="pt000100", vls_path="input.las", afs_path="input.tif")],
+)
+svc = ReliefService(root_dir="output")
+result = svc.run(request)
 ```
 
 ## Ключевые алгоритмические решения
 
-1. **Без экстраполяции краёв** — `fillnodata` заполняет только внутренние дырки (nodata, окружённые валидными данными). Краевые nodata остаются.
+1. **Без экстраполяции краёв** — `fillnodata` заполняет только внутренние дырки. Краевые nodata остаются.
 
-2. **Интерполяция дырок при сглаживании** — `gauss_smooth` заполняет внутренние дырки перед фильтром, заменяет оставшийся nodata на медиану валидных, затем восстанавливает nodata на краях.
+2. **Min-Z fallback из ground-точек** — дырки DTM заполняются минимальными Z из ground-классифицированных точек (не из всех точек).
 
-3. **Склоны по сглаженной DTM** — уклоны и экспозиции строятся по сглаженной DTM (`*_dem_smooth.tif`), не по сырой.
+3. **Склоны по сглаженной DTM** — уклоны и экспозиции строятся по сглаженной DTM, не по сырой.
 
-4. **CRS из эталонного TIFF** — CRS извлекается из эталонного DSM или АФС, не хардкодится (SK42 ≠ EPSG:32642).
+4. **IDW растеризация** — DTM строится через PDAL `writers.gdal` с `output_type="idw"`.
+
+5. **DSM (ЦММ) через max** — `output_type="max"` берёт максимальную Z по всем точкам в ячейке.
+
+6. **TPI трёхмасштабный** — радиусы 270/810/2430 м, `cv2.blur` box filter, нормировка на std.
+
+7. **Пропуск тайла при ошибке** — упавший тайл → status "failed" + reason, остальные продолжаются.
 
 ## Тестовые данные
 
-Интеграционный тест требует:
-- `test_data/P-42-041-239-g_ground_TLO.las` — нормализованный LAS
+Интеграционные тесты требуют:
+- `test_data/P-42-041-239-g_ground_TLO.las` — нормализованный LAS (TLO)
 - `test_data/P-42-041-239-g_DSM.tif` — эталонный DSM
+- `test_data/P-42-041-239-g.tif` — АФС
 
-Синтетический тест (`test_synthetic_dsm.py`) не требует внешних данных.
+Demo-датасет:
+- `23_04_12_digital_elevation_1-46-315/demo_data/pt000100.las`
+- `23_04_12_digital_elevation_1-46-315/demo_data/00000100.tif`
 
-## Покрытие
+## Тесты
 
-41 тест, 0 неудач, покрытие **82%** (требование ≥75%).
+56 тестов, 0 неудач. Покрытие unit-тестами — без интеграционных данных ~22%; с test_data/ — выше.
 
 ## Зависимости
 
-| Пакет | Версия | Назначение |
-|-------|--------|-----------|
-| GDAL | 3.13.1 | Геопространственная обработка |
-| PDAL | 3.5.4 | Обработка облаков точек (SMRF) |
-| laspy | 2.7.0 | Чтение/запись LAS |
-| rasterio | 1.5.0 | Чтение/запись GeoTIFF |
-| scipy | 1.18.0 | Фильтры, интерполяция |
-| numpy | 2.5.1 | Массивы |
-| shapely | 2.1.2 | Геометрия |
-| pyproj | 3.7.2 | Координатные системы |
+| Пакет | Назначение |
+|-------|-----------|
+| GDAL | Геопространственная обработка (DEMProcessing, ContourGenerate, Warp) |
+| PDAL | Обработка облаков точек (SMRF, elm, outlier, sample, hag_delaunay) |
+| laspy | Чтение/запись LAS |
+| rasterio | Чтение/запись GeoTIFF, fillnodata |
+| scipy | gaussian_filter, binary_fill_holes, Delaunay |
+| numpy | Массивы |
+| opencv-python | cv2.blur (TPI box filter) |
+| shapely | Геометрия (crop AOI) |
+| pyproj | Координатные системы |

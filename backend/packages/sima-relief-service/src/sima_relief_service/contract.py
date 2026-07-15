@@ -44,9 +44,24 @@ class SmrfParams:
 @dataclass
 class SmoothingParams:
     enabled: bool = False
-    sigma: float = 1.0
+    sigma: float = 2.0  # legacy: GAUSS_STD(0.25) × RESOLUTION(0.25→1.0) → 2.0 при res=1.0
     order: int = 0
     window: int = 5
+
+
+@dataclass
+class DsmParams:
+    """Параметры построения ЦММ (DSM — цифровая модель поверхности/местности).
+
+    Q3 «Анализ рельефа» не требует ЦММ напрямую, но легаси-прототип (sima_dsm_demo)
+    и модуль forest_analysis требуют ЦММ как вход. Сервис рельефа строит ЦММ
+    по запросу (enabled=True), используя DSMBuilder (output_type='max').
+    """
+    enabled: bool = False
+    output_type: str = "max"  # legacy CMD.py: writers.gdal output_type='max'
+    interpolate: bool = True
+    fill_holes: bool = True
+    max_search_distance: int = 100
 
 
 @dataclass
@@ -70,7 +85,7 @@ class HeightsParams:
 
 @dataclass
 class VectorsParams:
-    horizontals: list = field(default_factory=list)  # шаги горизонталей, м
+    horizontals: list = field(default_factory=lambda: [0.5, 2.0, 5.0, 10.0])  # legacy: 0.5/2/5/10 м
     tin: bool = False
 
 
@@ -80,6 +95,7 @@ class ReliefParams:
     filter: FilterParams = field(default_factory=FilterParams)
     smrf: SmrfParams = field(default_factory=SmrfParams)
     smoothing: SmoothingParams = field(default_factory=SmoothingParams)
+    dsm: DsmParams = field(default_factory=DsmParams)
     derivatives: DerivativesParams = field(default_factory=DerivativesParams)
     heights: HeightsParams = field(default_factory=HeightsParams)
     vectors: VectorsParams = field(default_factory=VectorsParams)

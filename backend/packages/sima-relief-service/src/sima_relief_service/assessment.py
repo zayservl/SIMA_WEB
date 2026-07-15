@@ -24,12 +24,6 @@ from pyproj import CRS, Geod
 
 
 @dataclass
-class FailedTile:
-    name: str
-    reason: str
-
-
-@dataclass
 class AfsReport:
     crs: str
     extent_area_km2: float

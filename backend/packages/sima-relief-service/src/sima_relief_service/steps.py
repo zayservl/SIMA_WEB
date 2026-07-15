@@ -22,7 +22,8 @@ from sima_dem_core.filters import ManualFilter, StatFilter, RangeFilter, Outlier
 from sima_dem_core.height import get_every_nth
 from sima_dem_core.raster.contours import generate_contours
 from sima_dem_core.raster.tpi import calculate_tpi
-from sima_dem_ground.ground import GroundProcessing, SMRFConfig, FillConfig
+from sima_dem_dsm.dsm import DSMBuilder, DSMConfig
+from sima_dem_ground.ground import GroundProcessing, FillConfig, RasterOutputConfig
 
 from .contract import ReliefParams, filter_kwargs, map_smrf_config, map_tpi_config
 from .status import OutputArtifact
@@ -31,10 +32,6 @@ from .tin import build_tin_from_las
 
 def _stem(path: str) -> str:
     return Path(path).stem
-
-
-def _ext(path: str) -> str:
-    return os.path.splitext(path)[1]
 
 
 def _artifact(path: str, kind: str, layer: str) -> OutputArtifact:
@@ -108,11 +105,41 @@ def step_dtm(
         smrf=smrf_cfg,
         cut_smrf=params.smrf.cut_smrf,
         fill=FillConfig(fill_holes=params.derivatives.interpolation,
-                         max_search_distance=params.derivatives.inter_amp),
+                         max_search_distance=params.derivatives.inter_amp,
+                         fallback_to_min_z=True),
+        raster_out=RasterOutputConfig(output_type="idw"),
     )
     gp.get_raster(las_path, crs_wkt=crs, out_path=ground_las)
     dtm_path = gp.raster[-1] if gp.raster else os.path.join(out_dir, stem + "_dem.tif")
     return dtm_path, ground_las
+
+
+# --- 3b. DSM (ЦММ) ------------------------------------------------------
+
+def step_dsm(
+    las_path: str,
+    params: ReliefParams,
+    out_dir: str,
+    crs: str,
+    resolution: float,
+) -> str:
+    """Построить ЦММ (DSM — цифровая модель поверхности) из LAS.
+
+    Использует DSMBuilder (output_type='max') — соответствует легаси CMD.py.
+    Q3: ЦММ требуется как вход для «Анализ насаждений» и «Анализ водного слоя».
+    """
+    stem = _stem(las_path)
+    out_path = os.path.join(out_dir, stem + "_dsm.tif")
+    cfg = DSMConfig(
+        resolution=resolution,
+        output_type=params.dsm.output_type,
+        interpolate=params.dsm.interpolate,
+        fill_holes=params.dsm.fill_holes,
+        max_search_distance=params.dsm.max_search_distance,
+    )
+    builder = DSMBuilder(output=out_dir, crs=crs, config=cfg)
+    dsm_path = builder.build(las_path, crs_wkt=crs, out_path=out_path)
+    return dsm_path
 
 
 # --- 4. Smooth ----------------------------------------------------------

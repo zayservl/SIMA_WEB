@@ -20,7 +20,7 @@ from typing import Optional, Callable
 
 from .contract import ReliefRequest, ReliefParams
 from .determinism import DeterminismContext
-from .status import Job, OutputArtifact, Tile, TileStep
+from .status import Job, OutputArtifact, Tile
 from .storage import LocalFSStorage, Session, Storage, _new_id
 from . import steps as S
 from .assessment import MaterialAssessment, assess_materials
@@ -135,12 +135,6 @@ class ReliefService:
             if st.status not in ("failed", "done", "skipped"):
                 st.mark_failed(_now_iso(), 0, reason)
 
-    def _mark_rest_skipped(self, tile: Tile, names: list[str]) -> None:
-        for nm in names:
-            st = tile.step(nm)
-            if st.status == "pending":
-                st.mark_skipped("пропущен: предыдущий шаг не выполнен")
-
     def _run_tile(
         self, tile: Tile, tile_in, params: ReliefParams, crs: str, res: float, out_dir: str,
     ) -> list[OutputArtifact]:
@@ -161,6 +155,10 @@ class ReliefService:
         arts.append(S._artifact(dtm, "geotiff", "dtm"))
         if ground_las and os.path.exists(ground_las):
             arts.append(S._artifact(ground_las, "las", "ground_las"))
+        # 3b. DSM (ЦММ) — optional, gated by params.dsm.enabled
+        if params.dsm.enabled:
+            dsm = self._step(tile, "dsm", lambda: S.step_dsm(las, params, out_dir, crs, res))
+            arts.append(S._artifact(dsm, "geotiff", "dsm"))
         # 4. smooth
         smoothed = None
         if params.smoothing.enabled:

@@ -157,12 +157,17 @@ class GroundProcessing:
         return pipeline
 
     def _build_min_z_pipeline(self, input_path: str, raster_path: str) -> list[dict]:
+        check = CheckClassification(input_path)
         pipeline = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
             _fix_returns_stage(),
         ]
         pipeline += self._maybe_crop_stage()
-        pipeline += _elm_outlier_stages()
+        if not check.is_ground:
+            pipeline += _elm_outlier_stages()
+            pipeline.append(self.smrf.to_cut_dict() if self.cut_smrf else self.smrf.to_dict())
+            pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
+        pipeline.append({"type": "filters.sample", "radius": self.resolution})
         min_cfg = RasterOutputConfig(output_type="min", data_type=self.raster_out.data_type,
                                      gdaldriver=self.raster_out.gdaldriver)
         pipeline.append(_writers_gdal_stage(raster_path, min_cfg, self.resolution))

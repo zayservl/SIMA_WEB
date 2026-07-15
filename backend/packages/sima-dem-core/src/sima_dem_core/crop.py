@@ -8,7 +8,6 @@ from __future__ import annotations
 import laspy
 import numpy as np
 from shapely.geometry import Point, shape
-from shapely import from_geojson
 import json
 
 
