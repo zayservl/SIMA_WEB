@@ -16,8 +16,6 @@ dependencies = [
     "pyproj>=3.0",
     "sima-dem-core",
     "sima-dem-ground",
-    "sima-dem-dsm",
-    "sima-dem-pipeline",
 ]
 
 [tool.setuptools.packages.find]

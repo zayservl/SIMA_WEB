@@ -24,7 +24,6 @@ addopts = [
     "--cov=sima_dem_core",
     "--cov=sima_dem_ground",
     "--cov=sima_dem_dsm",
-    "--cov=sima_dem_pipeline",
     "--cov=sima_relief_service",
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",

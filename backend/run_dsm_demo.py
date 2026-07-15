@@ -15,7 +15,7 @@ import rasterio, numpy as np
 
 backend = Path(__file__).parent
 for pkg in ["packages/sima-dem-core/src", "packages/sima-dem-ground/src",
-            "packages/sima-dem-dsm/src", "packages/sima-dem-pipeline/src"]:
+            "packages/sima-dem-dsm/src"]:
     sys.path.insert(0, str(backend / pkg))
 
 from sima_dem_ground.ground import GroundProcessing, SMRFConfig, FillConfig
