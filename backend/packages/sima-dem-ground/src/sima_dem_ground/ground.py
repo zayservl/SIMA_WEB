@@ -24,6 +24,8 @@ from sima_dem_core.check_classification import CheckClassification
 
 @dataclass
 class SMRFConfig:
+    """Параметры фильтра SMRF для классификации точек земли."""
+
     slope: float = 0.2
     window: int = 16
     threshold: float = 0.45
@@ -31,15 +33,19 @@ class SMRFConfig:
     returns: list = field(default_factory=lambda: ["first", "last", "intermediate", "only"])
 
     def to_dict(self) -> dict:
+        """Словарь параметров для filters.smrf в полном режиме."""
         return {"type": "filters.smrf", "slope": self.slope, "window": self.window,
                 "threshold": self.threshold, "scalar": self.scalar, "returns": self.returns}
 
     def to_cut_dict(self) -> dict:
+        """Словарь параметров для filters.smrf в cut-режиме."""
         return {"type": "filters.smrf", "threshold": 3, "returns": self.returns}
 
 
 @dataclass
 class FillConfig:
+    """Параметры интерполяции пустот в растре ЦМР."""
+
     fill_holes: bool = True
     max_search_distance: int = 100
     smoothing_iterations: int = 0
@@ -48,6 +54,8 @@ class FillConfig:
 
 @dataclass
 class RasterOutputConfig:
+    """Параметры записи растра через writers.gdal."""
+
     output_type: str = "idw"
     data_type: str = "float32"
     gdaldriver: str = "GTiff"
@@ -70,6 +78,7 @@ def _writers_gdal_stage(filename: str, cfg: RasterOutputConfig, resolution: floa
 
 
 class GroundProcessing:
+    """Оркестрация построения ЦМР из LAS через PDAL-пайплайны."""
 
     def __init__(
         self,
@@ -86,6 +95,7 @@ class GroundProcessing:
         fill: Optional[FillConfig] = None,
         raster_out: Optional[RasterOutputConfig] = None,
     ) -> None:
+        """Инициализация параметров обработки точек в ЦМР."""
         self.raster: list[str] = []
         self.classified_ground: Optional[str] = None
         self.aoi = aoi
@@ -102,6 +112,7 @@ class GroundProcessing:
 
     @staticmethod
     def _detect_crs_is_epsg(crs: str) -> bool:
+        """Определяет, является ли строка CRS EPSG-кодом."""
         if not crs:
             return False
         upper = crs.upper().strip()
@@ -115,14 +126,17 @@ class GroundProcessing:
 
     @staticmethod
     def _run_pdal(pipeline: list) -> None:
+        """Выполняет PDAL-пайплайн, сериализованный в JSON."""
         pdal.Pipeline(json.dumps(pipeline)).execute()
 
     def _maybe_crop_stage(self) -> list[dict]:
+        """Возвращает стадию crop по AOI, если CRS — EPSG."""
         if self.aoi and self.is_CRS_EPSG:
             return [{"type": "filters.crop", "polygon": self.aoi}]
         return []
 
     def _build_ground_pipeline(self, input_path: str, raster: str, out_path: Optional[str]) -> list[dict]:
+        """Собирает пайплайн классификации земли SMRF и записи растра."""
         smrf_stage = self.smrf.to_cut_dict() if self.cut_smrf else self.smrf.to_dict()
         pipeline = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
@@ -141,6 +155,7 @@ class GroundProcessing:
         return pipeline
 
     def _build_save_ground_pipeline(self, input_path: str, raster: str, out_path: Optional[str]) -> list[dict]:
+        """Собирает пайплайн для уже классифицированного LAS с сохранением ground."""
         pipeline = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
             _fix_returns_stage(),
@@ -157,6 +172,7 @@ class GroundProcessing:
         return pipeline
 
     def _build_min_z_pipeline(self, input_path: str, raster_path: str) -> list[dict]:
+        """Собирает пайплайн растра минимальных высот для заполнения пустот."""
         check = CheckClassification(input_path)
         pipeline = [
             {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
@@ -174,6 +190,7 @@ class GroundProcessing:
         return pipeline
 
     def _fill_from_min_z(self, input_path: str, raster: str) -> None:
+        """Заполняет пустоты ЦМР значениями минимальных высот из отдельного растра."""
         min_z_raster = raster.replace("_dem.tif", "_minz_fallback.tif")
         self._run_pdal(self._build_min_z_pipeline(input_path, min_z_raster))
 
@@ -225,6 +242,7 @@ class GroundProcessing:
 
     @staticmethod
     def _cleanup_temp(*paths: str) -> None:
+        """Удаляет временные файлы, игнорируя ошибки."""
         for p in paths:
             try:
                 os.remove(p)
@@ -232,6 +250,7 @@ class GroundProcessing:
                 pass
 
     def _set_projection(self, raster: str, crs_wkt: Optional[str]) -> None:
+        """Прописывает проекцию в растр GDAL, если WKT задан."""
         if raster is None or crs_wkt is None:
             return
         try:
@@ -243,6 +262,7 @@ class GroundProcessing:
             print("gdal SetProjection failed:", ee)
 
     def _interpolate(self, raster: str) -> None:
+        """Интерполирует внутренние пустоты растра через fillnodata."""
         with rasterio.open(raster) as src:
             profile = src.profile
             arr = src.read(1)
@@ -269,6 +289,7 @@ class GroundProcessing:
             dest.write_band(1, arr)
 
     def _get_raster_name(self, path: str, out_path: Optional[str]) -> tuple[str, str]:
+        """Формирует пути выходного растра ЦМР и сглаженного растра."""
         if out_path:
             filename, _ = os.path.splitext(out_path)
         else:
@@ -280,6 +301,7 @@ class GroundProcessing:
         return raster, smoothed
 
     def get_raster(self, path: str, crs_wkt: Optional[str] = None, out_path: Optional[str] = None) -> None:
+        """Основной метод: строит ЦМР из LAS с заполнением пустот и проекцией."""
         check = CheckClassification(path)
         raster, _ = self._get_raster_name(path, out_path)
         if check.is_ground:
