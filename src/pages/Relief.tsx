@@ -9,8 +9,16 @@ import { Checkbox, Radio, NumberInput, Field, InfoHint } from '@/components/ui/c
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ReliefParams, Job, SmoothingPreset } from '@/api/types'
+import type { ReliefParams, Job, SmoothingPreset, FilterMethod } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
+
+const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
+  smrf: 'SMRF',
+  manual: 'Ручная',
+  stat: 'Статистическая',
+  range: 'Перцентильная',
+  kmeans: 'Outlier',
+}
 
 export default function Relief() {
   const { projectId } = useParams()
@@ -93,7 +101,7 @@ export default function Relief() {
       {/* Классификация рельефа */}
       <Card>
         <CardPad>
-          <Accordion title="Классификация «Рельеф»" badge="SMRF">
+          <Accordion title="Классификация «Рельеф»" badge={FILTER_METHOD_LABELS[p.filter_method]}>
             <div className="space-y-4">
               <div className="flex flex-wrap gap-5">
                 <span className="inline-flex items-center gap-1.5">
