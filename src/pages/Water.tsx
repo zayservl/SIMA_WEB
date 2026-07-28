@@ -35,7 +35,7 @@ export default function Water() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'water')
+  const deps = checkDependencies(projectId || '', 'water', { cmd_source: p.cmd_source })
   const runTooltip = deps.ok
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')

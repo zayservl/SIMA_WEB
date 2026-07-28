@@ -37,7 +37,7 @@ export default function Forest() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'forest')
+  const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source, derivatives_source: p.derivatives_source })
   const runTooltip = deps.ok
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
