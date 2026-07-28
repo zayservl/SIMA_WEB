@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "active_work_id": "sima-v2-reviewer-feedback-124adca4",
+  "works": {
+    "sima-v2-reviewer-feedback-7c97bb6c": {
+      "work_id": "sima-v2-reviewer-feedback-7c97bb6c",
+      "active_plan": "/Users/sergeyzay/Documents/НЕДРА/СИМА/sima-web/.omo/plans/sima-v2-reviewer-feedback.md",
+      "plan_name": "sima-v2-reviewer-feedback",
+      "status": "active",
+      "started_at": "2026-07-28T08:56:16.717Z",
+      "updated_at": "2026-07-28T08:56:16.717Z",
+      "session_ids": [
+        "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB"
+      ],
+      "session_origins": {
+        "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "sima-v2-reviewer-feedback-124adca4": {
+      "work_id": "sima-v2-reviewer-feedback-124adca4",
+      "active_plan": "/Users/sergeyzay/Documents/НЕДРА/СИМА/sima-web/.omo/plans/sima-v2-reviewer-feedback.md",
+      "plan_name": "sima-v2-reviewer-feedback",
+      "status": "completed",
+      "started_at": "2026-07-28T08:56:16.726Z",
+      "updated_at": "2026-07-28T18:20:08.043Z",
+      "session_ids": [
+        "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB"
+      ],
+      "session_origins": {
+        "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Убрать подписи форматов внизу страницы («АФС: GeoTIFF / BigTIFF...» и «ВЛС: LAS 1.2...») — это инженерный софт, не нужны.",
+          "session_id": "opencode:ses_0560e4200ffeHohvaGHlFSXQPb",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-07-28T18:20:08.043Z",
+          "started_at": "2026-07-28T18:20:08.043Z",
+          "status": "running"
+        }
+      },
+      "ended_at": "2026-07-28T17:29:51.856Z",
+      "elapsed_ms": 30815130
+    }
+  },
+  "active_plan": "/Users/sergeyzay/Documents/НЕДРА/СИМА/sima-web/.omo/plans/sima-v2-reviewer-feedback.md",
+  "started_at": "2026-07-28T08:56:16.726Z",
+  "status": "completed",
+  "updated_at": "2026-07-28T18:20:08.043Z",
+  "session_ids": [
+    "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB"
+  ],
+  "session_origins": {
+    "opencode:ses_0583d9454ffeZrJWy07zGo6ZmB": "direct"
+  },
+  "plan_name": "sima-v2-reviewer-feedback",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Убрать подписи форматов внизу страницы («АФС: GeoTIFF / BigTIFF...» и «ВЛС: LAS 1.2...») — это инженерный софт, не нужны.",
+      "session_id": "opencode:ses_0560e4200ffeHohvaGHlFSXQPb",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-07-28T18:20:08.043Z",
+      "started_at": "2026-07-28T18:20:08.043Z",
+      "status": "running"
+    }
+  },
+  "agent": "atlas",
+  "ended_at": "2026-07-28T17:29:51.856Z",
+  "elapsed_ms": 30815130
+}

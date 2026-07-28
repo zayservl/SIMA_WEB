@@ -8,8 +8,8 @@ import { cn } from '@/lib/utils'
 import { artifactsFor, tileDir } from '@/lib/outputs'
 import type { Job, JobType, Tile, TileStatus, StepStatus } from '@/api/types'
 import {
-  CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, RotateCw, Circle,
-  Search, SkipForward, Play, Square, SlidersHorizontal,
+  CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Circle,
+  Search, SkipForward, Square, SlidersHorizontal,
 } from 'lucide-react'
 
 const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
@@ -144,7 +144,6 @@ export default function Tasks() {
   const navigate = useNavigate()
   const jobs = useProjectStore((s) => (projectId ? s.jobs.filter((j) => j.project_id === projectId) : s.jobs))
   const updateJob = useProjectStore((s) => s.updateJob)
-  const restartFailedTiles = useProjectStore((s) => s.restartFailedTiles)
   useJobSimulation(updateJob)
 
   if (jobs.length === 0) {
@@ -168,12 +167,16 @@ export default function Tasks() {
           const project = useProjectStore.getState().projects.find((p) => p.id === job.project_id)
           const seed = project?.scene.seed
           const deterministic = project?.scene.deterministic ?? true
+          const recomputeSrc = job.recompute_of
+            ? useProjectStore.getState().jobs.find((j) => j.id === job.recompute_of)
+            : undefined
           return (
             <JobCard
               key={job.id}
               job={job}
               seed={seed}
               deterministic={deterministic}
+              recomputeSrc={recomputeSrc}
               onRetry={() =>
                 updateJob(job.id, {
                   status: 'queued', progress: 0, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0,
@@ -188,9 +191,11 @@ export default function Tasks() {
                   })),
                 })
               }
-              onRestartFailed={() => restartFailedTiles(job.id)}
-              onRerunWithParams={() =>
+              onRecompute={() =>
                 projectId && navigate(`/projects/${projectId}/${job.type}`, { state: { retryParams: job.params } })
+              }
+              onRecomputeFailed={() =>
+                projectId && navigate(`/projects/${projectId}/${job.type}`, { state: { retryParams: job.params, recomputeFailedOf: job.id } })
               }
             />
           )
@@ -200,19 +205,19 @@ export default function Tasks() {
   )
 }
 
-function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWithParams }: {
+function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute, onRecomputeFailed }: {
   job: Job
   seed?: number
   deterministic: boolean
+  recomputeSrc?: Job
   onRetry: () => void
-  onRestartFailed: () => void
-  onRerunWithParams: () => void
+  onRecompute: () => void
+  onRecomputeFailed: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
   const [openTileId, setOpenTileId] = useState<string | null>(null)
-  const restartTile = useProjectStore((s) => s.restartTile)
   const stopTile = useProjectStore((s) => s.stopTile)
 
   const icon = job.status === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
@@ -256,6 +261,11 @@ function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWi
                 {seed != null && <span className="font-mono">· seed {seed}</span>}
                 {job.session_id && <span className="font-mono">· сессия {job.session_id}</span>}
               </div>
+              {recomputeSrc && (
+                <div className="mt-0.5 text-[11px] text-slate-400">
+                  пересчёт от {typeLabel[recomputeSrc.type]} · сессия {recomputeSrc.session_id}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -266,12 +276,12 @@ function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWi
             </div>
             <div className="flex items-center gap-2">
               {job.tiles_failed > 0 && (
-                <Button variant="outline" size="sm" onClick={onRestartFailed} title="Перезапустить только упавшие тайлы">
-                  <RotateCw className="h-3 w-3" /> Упавшие
+                <Button variant="outline" size="sm" onClick={onRecomputeFailed} title="Пересчитать упавшие тайлы с новыми параметрами (новая сессия)">
+                  <SlidersHorizontal className="h-3 w-3" /> Пересчитать упавшие
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={onRerunWithParams} title="Повторить с новыми параметрами (новая сессия)">
-                <SlidersHorizontal className="h-3 w-3" /> С новыми параметрами
+              <Button variant="outline" size="sm" onClick={onRecompute} title="Пересчитать с новыми параметрами (новая сессия)">
+                <SlidersHorizontal className="h-3 w-3" /> Пересчитать с новыми параметрами
               </Button>
             </div>
           </div>
@@ -351,7 +361,6 @@ function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWi
                         tile={t}
                         open={open}
                         onToggle={() => setOpenTileId(open ? null : t.id)}
-                        onRestart={() => restartTile(job.id, t.id)}
                         onStop={() => stopTile(job.id, t.id)}
                       />
                     )
@@ -368,7 +377,7 @@ function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWi
         {job.failed_tiles.length > 0 && !expanded && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
             <XCircle className="h-4 w-4 shrink-0" />
-            Остановлено {job.failed_tiles.length} тайл(ов). Раскройте для подробностей и потайлового перезапуска.
+            Остановлено {job.failed_tiles.length} тайл(ов). Раскройте для подробностей.
           </div>
         )}
       </CardPad>
@@ -376,11 +385,10 @@ function JobCard({ job, seed, deterministic, onRetry, onRestartFailed, onRerunWi
   )
 }
 
-function TileRow({ tile, open, onToggle, onRestart, onStop }: {
+function TileRow({ tile, open, onToggle, onStop }: {
   tile: Tile
   open: boolean
   onToggle: () => void
-  onRestart: () => void
   onStop: () => void
 }) {
   return (
@@ -416,15 +424,6 @@ function TileRow({ tile, open, onToggle, onRestart, onStop }: {
                 className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100"
               >
                 <Square className="h-3 w-3" /> Стоп
-              </button>
-            )}
-            {(tile.status === 'failed' || tile.status === 'skipped') && (
-              <button
-                onClick={onRestart}
-                title="Перезапустить тайл (новый id, новая папка вывода)"
-                className="inline-flex items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2 py-1 text-[11px] text-brand-700 hover:bg-brand-100"
-              >
-                <Play className="h-3 w-3" /> Перезапустить
               </button>
             )}
           </div>

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Project, Scene, MaterialAssessment, Job, ReliefParams, ForestParams, WaterParams, Tile } from '@/api/types'
-import { generateTiles, makeRetryTile, newSessionId } from '@/lib/tiles'
+import { generateTiles, newSessionId } from '@/lib/tiles'
 
 // Демо-параметры по умолчанию (из текущего проекта)
 export const defaultReliefParams: ReliefParams = {
@@ -8,6 +8,8 @@ export const defaultReliefParams: ReliefParams = {
   filter: { spm_min: 0, spm_max: 100, spr_num: 2, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
   smrf: { slope: 0.2, window: 16, threshold: 0.45, scalar: 1.2, cut_smrf: false, elm: true, outlier: true },
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
+  smoothing_preset: 'medium',
+  output_resolution_preset: 'native',
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
@@ -21,17 +23,34 @@ export const defaultReliefParams: ReliefParams = {
 }
 
 export const defaultForestParams: ForestParams = {
-  cmd: { enabled: true, threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true, its: true, den: true }, median_window: 3 },
-  detection: { method: 'yolov5', sample_size: 400, bound: 24, season: 'summer' },
+  cmd: { enabled: true, threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
+  detection: { method: 'yolov5', vegetation_state: 'active' },
   stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'] },
-  logging_category: { enabled: true, algorithm: 'threshold', features: ['dist', 'diam', 'hght'], thresholds: { hght: 5, dist_far: 10, dist_near: 4, diam: 16 } },
-  extras: { fire: false, fire_res: 1, fire_sm: 1, wind: false, wind_res: 1, wind_sm: 1, tlo: true, peaks: false, peak_size: 3 },
+  logging_category: {
+    enabled: true,
+    algorithm: 'threshold',
+    features: ['dist', 'diam', 'hght'],
+    thresholds: { hght: 5, dist_far: 10, dist_near: 4, diam: 16 },
+    table: {
+      rows: [
+        { category: '1 категория', height: 8, slope: 15, density: 0.3 },
+        { category: '2 категория', height: 12, slope: 10, density: 0.5 },
+        { category: '3 категория', height: 16, slope: 7, density: 0.7 },
+        { category: '4 категория', height: 20, slope: 5, density: 0.9 },
+      ],
+    },
+  },
+  smoothing_preset: 'medium',
+  output_resolution_preset: 'native',
+  dsm_source: { kind: 'system' },
+  derivatives_source: { kind: 'system' },
 }
 
 export const defaultWaterParams: WaterParams = {
-  segment: { threshold: 0.6, sample_size: 1024, bound: 0, smooth: 1, resolution: 0.5 },
-  swamp: { segment: false, threshold: 0.5, smooth: 1, resolution: 0.5, classify: false },
-  buffers: { coastal_m: 20, protective_m: 50, water_protection_m: 200 },
+  segment: { threshold: 0.6, smooth: 1 },
+  smoothing_preset: 'medium',
+  output_resolution_preset: 'native',
+  cmd_source: { kind: 'system' },
 }
 
 interface ProjectStore {
@@ -44,8 +63,7 @@ interface ProjectStore {
   setAssessment: (projectId: string, a: MaterialAssessment) => void
   addJob: (job: Job) => void
   updateJob: (jobId: string, patch: Partial<Job>) => void
-  restartTile: (jobId: string, tileId: string) => void
-  restartFailedTiles: (jobId: string) => void
+  recomputeJob: (jobId: string, tileIds: string[] | undefined, newParams: ReliefParams | ForestParams | WaterParams) => void
   stopTile: (jobId: string, tileId: string) => void
   removeProject: (id: string) => void
 }
@@ -125,38 +143,39 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     }),
   updateJob: (jobId, patch) =>
     set((s) => ({ jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, ...patch } : j)) })),
-  restartTile: (jobId, tileId) =>
-    set((s) => ({
-      jobs: s.jobs.map((j) => {
-        if (j.id !== jobId) return j
-        const tiles = j.tiles.map((t) =>
-          t.id === tileId && (t.status === 'failed' || t.status === 'skipped') ? makeRetryTile(t, j.type) : t
-        )
-        const agg = recompute(tiles)
-        const processed = agg.tiles_done + agg.tiles_failed + agg.tiles_skipped
-        return {
-          ...j, tiles, ...agg,
-          progress: Math.round((processed / j.tiles_total) * 100),
-          status: 'running',
-          finished_at: undefined,
-        }
-      }),
-    })),
-  restartFailedTiles: (jobId) =>
-    set((s) => ({
-      jobs: s.jobs.map((j) => {
-        if (j.id !== jobId) return j
-        const tiles = j.tiles.map((t) => (t.status === 'failed' ? makeRetryTile(t, j.type) : t))
-        const agg = recompute(tiles)
-        const processed = agg.tiles_done + agg.tiles_failed + agg.tiles_skipped
-        return {
-          ...j, tiles, ...agg,
-          progress: Math.round((processed / j.tiles_total) * 100),
-          status: 'running',
-          finished_at: undefined,
-        }
-      }),
-    })),
+  recomputeJob: (jobId, tileIds, newParams) =>
+    set((s) => {
+      const src = s.jobs.find((j) => j.id === jobId)
+      if (!src) return s
+      const selectedTiles = tileIds
+        ? src.tiles.filter((t) => tileIds.includes(t.id))
+        : src.tiles
+      const newTiles: Tile[] = selectedTiles.map((t) => ({
+        id: 't-' + Math.random().toString(36).slice(2, 10),
+        name: t.name,
+        kind: t.kind,
+        status: 'queued' as const,
+        steps: t.steps.map((st) => ({ ...st, status: 'pending' as const, started_at: undefined, finished_at: undefined, duration_ms: undefined, message: undefined })),
+        retry_of: t.id,
+      }))
+      const newJob: Job = {
+        id: 'j-' + Math.random().toString(36).slice(2, 10),
+        project_id: src.project_id,
+        type: src.type,
+        status: 'queued',
+        progress: 0,
+        session_id: newSessionId(),
+        tiles_total: newTiles.length,
+        tiles_done: 0,
+        tiles_failed: 0,
+        tiles_skipped: 0,
+        failed_tiles: [],
+        tiles: newTiles,
+        params: newParams,
+        recompute_of: jobId,
+      }
+      return { jobs: [newJob, ...s.jobs] }
+    }),
   stopTile: (jobId, tileId) =>
     set((s) => ({
       jobs: s.jobs.map((j) => {

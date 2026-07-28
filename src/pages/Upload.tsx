@@ -5,7 +5,7 @@ import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Field } from '@/components/ui/controls'
 import { Badge } from '@/components/ui/badge'
-import { FolderOpen, FileImage, Box, AlertTriangle, CheckCircle2, XCircle, Layers } from 'lucide-react'
+import { FolderOpen, AlertTriangle, CheckCircle2, XCircle, Layers } from 'lucide-react'
 import type { MaterialAssessment } from '@/api/types'
 
 // ---- Потайловая модель входных материалов (Блок Д) -----------------------
@@ -23,28 +23,41 @@ interface InputTile {
 
 const TARGET_CRS = 'EPSG:32637'
 
-// Демо-набор пар ТИФ+ЛАС. Включает: совпадающие пары, пару с несовпадением СК
+// Демо-набор пар ТИФ+ЛАС. Включает: совпадающие пары, пары с несовпадением СК
 // (демонстрация валидации), пару без ВЛС (неполная).
 function generateMockInputTiles(): InputTile[] {
-  return [
-    { id: 'in-001', name: 'tile_001', area_km2: 1.0,
-      afs: { file: '00000100.tif', crs: 'EPSG:32637', resolution_m: 0.14, size_mb: 147 },
-      vls: { file: 'pt000100.las', crs: 'EPSG:32637', density_pts_m2: 4577, height_range_m: [22.08, 1031.87], size_mb: 122 } },
-    { id: 'in-002', name: 'tile_002', area_km2: 1.0,
-      afs: { file: '00000200.tif', crs: 'EPSG:32637', resolution_m: 0.14, size_mb: 151 },
-      vls: { file: 'pt000200.las', crs: 'EPSG:32637', density_pts_m2: 4402, height_range_m: [18.4, 998.2], size_mb: 119 } },
-    { id: 'in-003', name: 'tile_003', area_km2: 1.0,
+  const tiles: InputTile[] = []
+  for (let i = 1; i <= 24; i++) {
+    const id = `in-${String(i).padStart(3, '0')}`
+    const name = `tile_${String(i).padStart(3, '0')}`
+    const afsFile = `${String(i * 100).padStart(6, '0')}.tif`
+    const vlsFile = `pt${String(i * 100).padStart(6, '0')}.las`
+    const afsSize = 130 + ((i * 7) % 30)
+    const vlsSize = 115 + ((i * 5) % 25)
+    const density = 4000 + ((i * 37) % 1000)
+    const hMin = +(15 + ((i * 0.5) % 30)).toFixed(2)
+    const hMax = +(950 + ((i * 3) % 200)).toFixed(2)
+
+    let afsCrs = TARGET_CRS
+    let vls: InputVls | null = {
+      file: vlsFile, crs: TARGET_CRS, density_pts_m2: density, height_range_m: [hMin, hMax], size_mb: vlsSize,
+    }
+
+    if (i === 21 || i === 22) {
       // СК не совпадает внутри пары → валидация подсветит это
-      afs: { file: '00000300.tif', crs: 'EPSG:4326', resolution_m: 0.14, size_mb: 138 },
-      vls: { file: 'pt000300.las', crs: 'EPSG:32637', density_pts_m2: 4710, height_range_m: [25.0, 1045.5], size_mb: 130 } },
-    { id: 'in-004', name: 'tile_004', area_km2: 1.0,
-      afs: { file: '00000400.tif', crs: 'EPSG:32637', resolution_m: 0.14, size_mb: 142 },
-      vls: { file: 'pt000400.las', crs: 'EPSG:32637', density_pts_m2: 4620, height_range_m: [20.1, 1010.0], size_mb: 125 } },
-    { id: 'in-005', name: 'tile_005', area_km2: 1.0,
+      afsCrs = 'EPSG:4326'
+    } else if (i === 23) {
       // Неполная пара: нет ВЛС
-      afs: { file: '00000500.tif', crs: 'EPSG:32637', resolution_m: 0.14, size_mb: 133 },
-      vls: null },
-  ]
+      vls = null
+    }
+
+    tiles.push({
+      id, name, area_km2: 1.0,
+      afs: { file: afsFile, crs: afsCrs, resolution_m: 0.14, size_mb: afsSize },
+      vls,
+    })
+  }
+  return tiles
 }
 
 type PairStatus = 'ok' | 'reproject' | 'mismatch' | 'incomplete'
@@ -91,16 +104,27 @@ function aggregate(tiles: InputTile[]): MaterialAssessment {
   }
 }
 
+const DSM_EXTENSIONS = ['.tif', '.tiff', '.geotiff']
+
+function hasDsmExtension(path: string): boolean {
+  const lower = path.trim().toLowerCase()
+  return DSM_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
+
 export default function Upload() {
   const { projectId } = useParams()
   const setAssessment = useProjectStore((s) => s.setAssessment)
+  const updateScene = useProjectStore((s) => s.updateScene)
   const projects = useProjectStore((s) => s.projects)
   const project = projects.find((p) => p.id === projectId)
 
   const [afsDir, setAfsDir] = useState(project?.scene.afs_dir || '')
   const [vlsDir, setVlsDir] = useState(project?.scene.vls_dir || '')
+  const [dsmDir, setDsmDir] = useState('')
   const [tiles, setTiles] = useState<InputTile[]>([])
   const [assessed, setAssessed] = useState(false)
+  const [detectedCrs, setDetectedCrs] = useState<string | null>(null)
+  const [dsmWarning, setDsmWarning] = useState(false)
 
   const reproject = project?.scene.reproject ?? true
   const targetCrs = project?.scene.target_crs || TARGET_CRS
@@ -110,7 +134,26 @@ export default function Upload() {
     const generated = generateMockInputTiles()
     setTiles(generated)
     setAssessment(projectId, aggregate(generated))
+
+    // СК из первого валидного тайла: АФС приоритетнее ВЛС.
+    const afsTile = generated.find((t) => t.afs)
+    const vlsTile = generated.find((t) => t.vls)
+    const afsCrs = afsTile?.afs?.crs ?? null
+    const vlsCrs = vlsTile?.vls?.crs ?? null
+    const detected = afsCrs ?? vlsCrs
+    setDetectedCrs(detected)
+
+    if (detected && projectId) {
+      updateScene(projectId, { target_crs: detected })
+    }
+
     setAssessed(true)
+  }
+
+  const onDsmChange = (value: string) => {
+    setDsmDir(value)
+    setAssessed(false)
+    setDsmWarning(value.trim().length > 0 && !hasDsmExtension(value))
   }
 
   const statuses = tiles.map((t) => pairStatus(t, reproject))
@@ -118,6 +161,13 @@ export default function Upload() {
   const hasReproject = statuses.includes('reproject')
   const hasIncomplete = statuses.includes('incomplete')
   const canProceed = !hasMismatch && !hasIncomplete
+
+  const afsCrsList = tiles.filter((t) => t.afs).map((t) => t.afs!.crs)
+  const vlsCrsList = tiles.filter((t) => t.vls).map((t) => t.vls!.crs)
+  const afsCrsSet = new Set(afsCrsList)
+  const vlsCrsSet = new Set(vlsCrsList)
+  const afsVlsCrsMismatch = assessed && afsCrsSet.size > 0 && vlsCrsSet.size > 0
+    && [...afsCrsSet].some((c) => !vlsCrsSet.has(c))
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -150,7 +200,23 @@ export default function Upload() {
                 />
               </div>
             </Field>
-            <Button onClick={handleAssess} disabled={!afsDir && !vlsDir}>
+            <Field label="ЦМР (GeoTIFF/BigTIFF) — опционально">
+              <div className="flex gap-2">
+                <FolderOpen className="mt-2 h-4 w-4 shrink-0 text-slate-400" />
+                <Input
+                  value={dsmDir}
+                  onChange={(e) => onDsmChange(e.target.value)}
+                  placeholder="/data/dsm или путь к файлу .tif"
+                />
+              </div>
+              {dsmWarning && (
+                <div className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-600">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Ожидается файл с расширением .tif, .tiff или .geotiff
+                </div>
+              )}
+            </Field>
+            <Button onClick={handleAssess} disabled={!afsDir && !vlsDir && !dsmDir}>
               Оценить материалы
             </Button>
           </div>
@@ -166,6 +232,17 @@ export default function Upload() {
               subtitle={`Целевая СК: ${targetCrs} · приведение ${reproject ? 'включено' : 'выключено'}`}
               action={<Layers className="h-4 w-4 text-slate-400" />}
             />
+            {detectedCrs ? (
+              <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-600">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                СК считана из метаданных: {detectedCrs}
+              </div>
+            ) : (
+              <div className="mb-3 flex items-center gap-1.5 text-xs text-amber-600">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                СК не определена — проверьте файлы
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -255,20 +332,6 @@ export default function Upload() {
             )}
           </CardPad>
         </Card>
-      )}
-
-      {/* Краткая сводка по форматам */}
-      {assessed && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-500">
-            <FileImage className="h-4 w-4 text-slate-400" />
-            АФС: GeoTIFF / BigTIFF (&gt;4 ГБ). Без JPEG — потеря информации.
-          </div>
-          <div className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-500">
-            <Box className="h-4 w-4 text-slate-400" />
-            ВЛС: LAS 1.2. Векторные выходы: Shapefile.
-          </div>
-        </div>
       )}
     </div>
   )

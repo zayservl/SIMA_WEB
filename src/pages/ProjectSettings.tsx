@@ -4,7 +4,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Input, Checkbox, NumberInput, Field } from '@/components/ui/controls'
 import { Button } from '@/components/ui/button'
-import { CRS_OPTIONS } from '@/lib/crs'
+import { cn } from '@/lib/utils'
 import { Globe, Shuffle } from 'lucide-react'
 
 // Параметры проекта: целевая СК, приведение съёмок, детерминизм/seed.
@@ -24,7 +24,6 @@ export default function ProjectSettings() {
 
   const scene = project.scene
   const targetCrs = scene.target_crs || settings.default_target_crs
-  const reproject = scene.reproject ?? true
   const deterministic = scene.deterministic ?? settings.deterministic.enabled
   const seed = scene.seed ?? settings.deterministic.seed
 
@@ -48,30 +47,19 @@ export default function ProjectSettings() {
         </CardPad>
       </Card>
 
-      {/* Целевая СК + приведение */}
+      {/* Целевая СК */}
       <Card>
         <CardPad>
-          <CardHeader title="Приведение съёмок" subtitle="Единая система координат для АФС и ВЛС" action={<Globe className="h-4 w-4 text-slate-400" />} />
+          <CardHeader title="Приведение съёмок" subtitle="СК считывается из метаданных загруженных файлов" action={<Globe className="h-4 w-4 text-slate-400" />} />
           <div className="space-y-4">
             <Field label="Целевая система координат">
-              <select
-                className="input-base"
-                value={targetCrs}
-                onChange={(e) => updateScene(project.id, { target_crs: e.target.value })}
-              >
-                {CRS_OPTIONS.map((c) => (
-                  <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <Globe className="h-4 w-4 text-slate-400" />
+                <span className={cn('text-slate-700', !targetCrs && 'text-amber-600')}>
+                  {targetCrs || 'Загрузите файлы, СК будет считана автоматически'}
+                </span>
+              </div>
             </Field>
-            <Checkbox
-              checked={reproject}
-              onChange={(v) => updateScene(project.id, { reproject: v })}
-              label="Привести съёмки к целевой СК перед обработкой"
-            />
-            <p className="hint-base">
-              Если СК АФС и ВЛС различаются, оба набора приводятся к указанной СК. Применяется в модулях «Рельеф», «Древостой», «Вода».
-            </p>
           </div>
         </CardPad>
       </Card>

@@ -4,15 +4,18 @@ import { useProjectStore, defaultWaterParams } from '@/store/projectStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Checkbox, NumberInput, Field, InfoHint } from '@/components/ui/controls'
-import { Play } from 'lucide-react'
-import type { WaterParams, Job } from '@/api/types'
+import { Radio, NumberInput, Field, Input, Select } from '@/components/ui/controls'
+import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { Play, AlertTriangle } from 'lucide-react'
+import type { WaterParams, Job, ReliefSource, SmoothingPreset, ResolutionPreset } from '@/api/types'
+import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
   const { projectId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
   const addJob = useProjectStore((s) => s.addJob)
+  const jobs = useProjectStore((s) => s.jobs)
   const [p, setP] = useState<WaterParams>(() =>
     (location.state as { retryParams?: WaterParams } | null)?.retryParams ?? defaultWaterParams
   )
@@ -32,6 +35,19 @@ export default function Water() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
+  const deps = checkDependencies(projectId || '', 'water', { cmd_source: p.cmd_source })
+  const runTooltip = deps.ok
+    ? undefined
+    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
+
+  // Завершённые задачи леса в рамках текущего проекта — источник ЦМД.
+  const forestJobs = projectId
+    ? jobs.filter((j) => j.project_id === projectId && j.type === 'forest' && j.status === 'success')
+    : []
+
+  const setSource = (patch: Partial<ReliefSource>) =>
+    setP((s) => ({ ...s, cmd_source: { ...s.cmd_source, ...patch } }))
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -42,8 +58,65 @@ export default function Water() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
+
+      {!deps.ok && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
+        </div>
+      )}
+
+      {/* Шапка модуля: СК, сглаживание, разрешение + переключатель источника ЦМД */}
+      <ModuleHeader
+        projectId={projectId ?? ''}
+        smoothingPreset={p.smoothing_preset}
+        resolutionPreset={p.output_resolution_preset}
+        onSmoothingChange={(v: SmoothingPreset) => set('smoothing_preset', v)}
+        onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
+      >
+        <div className="rounded-lg border border-slate-200 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМД</div>
+          <div className="space-y-2">
+            <Radio
+              checked={p.cmd_source.kind === 'system'}
+              onChange={() => setSource({ kind: 'system', upload_path: undefined })}
+              label="Рассчитанная в системе"
+            />
+            {p.cmd_source.kind === 'system' && (
+              <Select
+                value={p.cmd_source.system_session_id ?? ''}
+                onChange={(e) => set('cmd_source', { ...p.cmd_source, system_session_id: e.target.value || undefined })}
+              >
+                <option value="">— выбрать сессию —</option>
+                {forestJobs.map((j) => (
+                  <option key={j.id} value={j.session_id ?? j.id}>
+                    {j.session_id ?? j.id}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Radio
+              checked={p.cmd_source.kind === 'upload'}
+              onChange={() => setSource({ kind: 'upload', system_session_id: undefined })}
+              label="Загрузить .geotiff"
+            />
+            {p.cmd_source.kind === 'upload' && (
+              <Input
+                type="file"
+                accept=".tif,.tiff,.geotiff"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
+                    setSource({ upload_path: f.name })
+                  }
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </ModuleHeader>
 
       {/* Сегментация вод */}
       <Card>
@@ -54,51 +127,10 @@ export default function Water() {
                 <Field label="Порог" tooltip="Порог бинаризации маски вероятности. Значения выше порога → вода, ниже → не вода. По умолчанию 0.6.">
                   <NumberInput value={p.segment.threshold} step={0.05} min={0} max={1} onChange={(v) => set('segment', { ...p.segment, threshold: v })} />
                 </Field>
-                <Field label="Размер тайла"><NumberInput value={p.segment.sample_size} min={1} onChange={(v) => set('segment', { ...p.segment, sample_size: v })} /></Field>
-                <Field label="Перекрытие"><NumberInput value={p.segment.bound} min={0} onChange={(v) => set('segment', { ...p.segment, bound: v })} /></Field>
-                <Field label="Разрешение (м)"><NumberInput value={p.segment.resolution} step={0.1} min={0} onChange={(v) => set('segment', { ...p.segment, resolution: v })} /></Field>
+                <Field label="Сглаживание">
+                  <NumberInput value={p.segment.smooth} step={0.1} onChange={(v) => set('segment', { ...p.segment, smooth: v })} />
+                </Field>
               </div>
-              <Field label="Сглаживание">
-                <NumberInput value={p.segment.smooth} step={0.1} onChange={(v) => set('segment', { ...p.segment, smooth: v })} className="w-32" />
-              </Field>
-            </div>
-          </Accordion>
-        </CardPad>
-      </Card>
-
-      {/* Болота */}
-      <Card>
-        <CardPad>
-          <Accordion title="Болота" defaultOpen={false}>
-            <div className="space-y-4">
-              <Checkbox checked={p.swamp.segment} onChange={(v) => set('swamp', { ...p.swamp, segment: v })} label="Сегментация болот" />
-              <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 ${p.swamp.segment ? '' : 'opacity-40 pointer-events-none'}`}>
-                <Field label="Порог"><NumberInput value={p.swamp.threshold} step={0.05} onChange={(v) => set('swamp', { ...p.swamp, threshold: v })} /></Field>
-                <Field label="Сглаживание"><NumberInput value={p.swamp.smooth} step={0.1} onChange={(v) => set('swamp', { ...p.swamp, smooth: v })} /></Field>
-                <Field label="Разрешение (м)"><NumberInput value={p.swamp.resolution} step={0.1} onChange={(v) => set('swamp', { ...p.swamp, resolution: v })} /></Field>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  checked={p.swamp.classify}
-                  onChange={(v) => set('swamp', { ...p.swamp, classify: v })}
-                  label="Классификация по TPI"
-                  disabled={!p.swamp.segment}
-                />
-                <InfoHint text="Классификация болот по индексу TPI: среднее TPI > 0 → верховое (класс 1), ≤ 0 → низинное (класс 0)." />
-              </div>
-            </div>
-          </Accordion>
-        </CardPad>
-      </Card>
-
-      {/* Охранные зоны */}
-      <Card>
-        <CardPad>
-          <Accordion title="Охранные зоны" defaultOpen={false}>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Прибрежная полоса (м)"><NumberInput value={p.buffers.coastal_m} onChange={(v) => set('buffers', { ...p.buffers, coastal_m: v })} /></Field>
-              <Field label="Защитная полоса (м)"><NumberInput value={p.buffers.protective_m} onChange={(v) => set('buffers', { ...p.buffers, protective_m: v })} /></Field>
-              <Field label="Водоохранная зона (м)"><NumberInput value={p.buffers.water_protection_m} onChange={(v) => set('buffers', { ...p.buffers, water_protection_m: v })} /></Field>
             </div>
           </Accordion>
         </CardPad>
