@@ -5,9 +5,11 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Checkbox, Radio, NumberInput, Field, Input, InfoHint } from '@/components/ui/controls'
-import { Play } from 'lucide-react'
-import type { ForestParams, Job } from '@/api/types'
+import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
+import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { Play, AlertTriangle } from 'lucide-react'
+import type { ForestParams, Job, ReliefSource, SmoothingPreset, ResolutionPreset } from '@/api/types'
+import { checkDependencies } from '@/lib/dependencies'
 
 export default function Forest() {
   const { projectId } = useParams()
@@ -15,6 +17,7 @@ export default function Forest() {
   const location = useLocation()
   const { settings } = useSettingsStore()
   const addJob = useProjectStore((s) => s.addJob)
+  const jobs = useProjectStore((s) => s.jobs)
   const [p, setP] = useState<ForestParams>(() =>
     (location.state as { retryParams?: ForestParams } | null)?.retryParams ?? defaultForestParams
   )
@@ -34,6 +37,19 @@ export default function Forest() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
+  const deps = checkDependencies(projectId || '', 'forest')
+  const runTooltip = deps.ok
+    ? undefined
+    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
+
+  // Завершённые задачи рельефа в рамках текущего проекта — источник ЦМР/производных.
+  const reliefJobs = projectId
+    ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
+    : []
+
+  const setSource = (key: 'dsm_source' | 'derivatives_source', patch: Partial<ReliefSource>) =>
+    setP((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -44,8 +60,110 @@ export default function Forest() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
+
+      {!deps.ok && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
+        </div>
+      )}
+
+      {/* Шапка модуля: СК, сглаживание, разрешение + переключатели источника */}
+      <ModuleHeader
+        projectId={projectId ?? ''}
+        smoothingPreset={p.smoothing_preset}
+        resolutionPreset={p.output_resolution_preset}
+        onSmoothingChange={(v: SmoothingPreset) => set('smoothing_preset', v)}
+        onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Источник ЦМР */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
+            <div className="space-y-2">
+              <Radio
+                checked={p.dsm_source.kind === 'system'}
+                onChange={() => setSource('dsm_source', { kind: 'system', upload_path: undefined })}
+                label="Рассчитанная в системе"
+              />
+              {p.dsm_source.kind === 'system' && (
+                <Select
+                  value={p.dsm_source.system_session_id ?? ''}
+                  onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
+                >
+                  <option value="">— выбрать сессию —</option>
+                  {reliefJobs.map((j) => (
+                    <option key={j.id} value={j.session_id ?? j.id}>
+                      {j.session_id ?? j.id}
+                    </option>
+                  ))}
+                </Select>
+              )}
+              <Radio
+                checked={p.dsm_source.kind === 'upload'}
+                onChange={() => setSource('dsm_source', { kind: 'upload', system_session_id: undefined })}
+                label="Загрузить .geotiff"
+              />
+              {p.dsm_source.kind === 'upload' && (
+                <Input
+                  type="file"
+                  accept=".tif,.tiff,.geotiff"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
+                      setSource('dsm_source', { upload_path: f.name })
+                    }
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Источник производных рельефа */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник производных рельефа</div>
+            <div className="space-y-2">
+              <Radio
+                checked={p.derivatives_source.kind === 'system'}
+                onChange={() => setSource('derivatives_source', { kind: 'system', upload_path: undefined })}
+                label="Рассчитанная в системе"
+              />
+              {p.derivatives_source.kind === 'system' && (
+                <Select
+                  value={p.derivatives_source.system_session_id ?? ''}
+                  onChange={(e) => setSource('derivatives_source', { system_session_id: e.target.value || undefined })}
+                >
+                  <option value="">— выбрать сессию —</option>
+                  {reliefJobs.map((j) => (
+                    <option key={j.id} value={j.session_id ?? j.id}>
+                      {j.session_id ?? j.id}
+                    </option>
+                  ))}
+                </Select>
+              )}
+              <Radio
+                checked={p.derivatives_source.kind === 'upload'}
+                onChange={() => setSource('derivatives_source', { kind: 'upload', system_session_id: undefined })}
+                label="Загрузить .geotiff"
+              />
+              {p.derivatives_source.kind === 'upload' && (
+                <Input
+                  type="file"
+                  accept=".tif,.tiff,.geotiff"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
+                      setSource('derivatives_source', { upload_path: f.name })
+                    }
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      </ModuleHeader>
 
       {/* ЦМД */}
       <Card>
@@ -67,8 +185,6 @@ export default function Forest() {
                 </div>
                 <div className="flex flex-wrap gap-4">
                   <Checkbox checked={p.cmd.channels.chm} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, chm: v } })} label="CHM (высота крон)" />
-                  <Checkbox checked={p.cmd.channels.its} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, its: v } })} label="ITS (интенсивность)" />
-                  <Checkbox checked={p.cmd.channels.den} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, den: v } })} label="DEN (плотность)" />
                 </div>
               </div>
             </div>
@@ -84,22 +200,16 @@ export default function Forest() {
               <div className="flex flex-wrap gap-5">
                 <Radio checked={p.detection.method === 'yolov5'} onChange={() => set('detection', { ...p.detection, method: 'yolov5' })} label="Нейросеть" />
                 <Radio checked={p.detection.method === 'watershed'} onChange={() => set('detection', { ...p.detection, method: 'watershed' })} label="Водораздел" />
-                <Radio checked={p.detection.method === 'both'} onChange={() => set('detection', { ...p.detection, method: 'both' })} label="Оба метода" />
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Field label="Размер тайла (px)"><NumberInput value={p.detection.sample_size} onChange={(v) => set('detection', { ...p.detection, sample_size: v })} /></Field>
-                <Field label="Перекрытие (px)"><NumberInput value={p.detection.bound} onChange={(v) => set('detection', { ...p.detection, bound: v })} /></Field>
-                <Field label="Сезон">
-                  <select
-                    className="input-base"
-                    value={p.detection.season}
-                    onChange={(e) => set('detection', { ...p.detection, season: e.target.value as 'summer' | 'winter' })}
-                  >
-                    <option value="summer">Лето</option>
-                    <option value="winter">Зима</option>
-                  </select>
-                </Field>
-              </div>
+              <Field label="Состояние вегетации">
+                <Select
+                  value={p.detection.vegetation_state}
+                  onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
+                >
+                  <option value="active">Активная</option>
+                  <option value="absent">Отсутствует</option>
+                </Select>
+              </Field>
               <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                 Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
               </div>
@@ -158,37 +268,68 @@ export default function Forest() {
                     <Field label="diam <"><NumberInput value={p.logging_category.thresholds.diam} onChange={(v) => set('logging_category', { ...p.logging_category, thresholds: { ...p.logging_category.thresholds!, diam: v } })} /></Field>
                   </div>
                 )}
-              </div>
-            </div>
-          </Accordion>
-        </CardPad>
-      </Card>
 
-      {/* Доп. слои */}
-      <Card>
-        <CardPad>
-          <Accordion title="Дополнительные слои" defaultOpen={false}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Checkbox checked={p.extras.fire} onChange={(v) => set('extras', { ...p.extras, fire: v })} label="Гари" />
-                <div className={`mt-2 grid grid-cols-2 gap-2 ${p.extras.fire ? '' : 'opacity-40 pointer-events-none'}`}>
-                  <Field label="Разрешение"><NumberInput value={p.extras.fire_res} step={0.1} onChange={(v) => set('extras', { ...p.extras, fire_res: v })} /></Field>
-                  <Field label="Сглаживание"><NumberInput value={p.extras.fire_sm} step={0.1} onChange={(v) => set('extras', { ...p.extras, fire_sm: v })} /></Field>
+                {/* Таблица категорий 4×3 */}
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Таблица категорий рубки
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="py-2 pr-3 font-medium">Категория</th>
+                          <th className="py-2 px-3 font-medium">Высота дерева</th>
+                          <th className="py-2 px-3 font-medium">Уклон</th>
+                          <th className="py-2 px-3 font-medium">Плотность</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.logging_category.table.rows.map((row, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-2 pr-3 text-slate-700">{row.category}</td>
+                            <td className="py-2 px-3">
+                              <NumberInput
+                                value={row.height}
+                                step={0.1}
+                                disabled={!p.logging_category.enabled}
+                                onChange={(v) => {
+                                  const rows = [...p.logging_category.table.rows]
+                                  rows[i] = { ...rows[i], height: v }
+                                  set('logging_category', { ...p.logging_category, table: { rows } })
+                                }}
+                              />
+                            </td>
+                            <td className="py-2 px-3">
+                              <NumberInput
+                                value={row.slope}
+                                step={0.1}
+                                disabled={!p.logging_category.enabled}
+                                onChange={(v) => {
+                                  const rows = [...p.logging_category.table.rows]
+                                  rows[i] = { ...rows[i], slope: v }
+                                  set('logging_category', { ...p.logging_category, table: { rows } })
+                                }}
+                              />
+                            </td>
+                            <td className="py-2 px-3">
+                              <NumberInput
+                                value={row.density}
+                                step={0.05}
+                                disabled={!p.logging_category.enabled}
+                                onChange={(v) => {
+                                  const rows = [...p.logging_category.table.rows]
+                                  rows[i] = { ...rows[i], density: v }
+                                  set('logging_category', { ...p.logging_category, table: { rows } })
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <Checkbox checked={p.extras.wind} onChange={(v) => set('extras', { ...p.extras, wind: v })} label="Ветровалы" />
-                <div className={`mt-2 grid grid-cols-2 gap-2 ${p.extras.wind ? '' : 'opacity-40 pointer-events-none'}`}>
-                  <Field label="Разрешение"><NumberInput value={p.extras.wind_res} step={0.1} onChange={(v) => set('extras', { ...p.extras, wind_res: v })} /></Field>
-                  <Field label="Сглаживание"><NumberInput value={p.extras.wind_sm} step={0.1} onChange={(v) => set('extras', { ...p.extras, wind_sm: v })} /></Field>
-                </div>
-              </div>
-              <Checkbox checked={p.extras.tlo} onChange={(v) => set('extras', { ...p.extras, tlo: v })} label="Сохранить TLO" />
-              <div>
-                <Checkbox checked={p.extras.peaks} onChange={(v) => set('extras', { ...p.extras, peaks: v })} label="Пики" />
-                {p.extras.peaks && (
-                  <div className="mt-2"><Field label="Размер"><NumberInput value={p.extras.peak_size} onChange={(v) => set('extras', { ...p.extras, peak_size: v })} /></Field></div>
-                )}
               </div>
             </div>
           </Accordion>

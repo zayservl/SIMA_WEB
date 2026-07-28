@@ -5,9 +5,12 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input, Checkbox, Radio, NumberInput, Field, InfoHint } from '@/components/ui/controls'
-import { Play } from 'lucide-react'
-import type { ReliefParams, Job } from '@/api/types'
+import { Checkbox, Radio, NumberInput, Field, InfoHint } from '@/components/ui/controls'
+import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
+import { Play, AlertTriangle } from 'lucide-react'
+import type { ReliefParams, Job, SmoothingPreset } from '@/api/types'
+import { checkDependencies } from '@/lib/dependencies'
 
 export default function Relief() {
   const { projectId } = useParams()
@@ -21,6 +24,17 @@ export default function Relief() {
     (location.state as { retryParams?: ReliefParams } | null)?.retryParams ?? defaultReliefParams
   )
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
+
+  // Маппинг предустановок сглаживания → sigma/expert-параметры
+  const handleSmoothingPreset = (v: SmoothingPreset) => {
+    set('smoothing_preset', v)
+    const sigmaByPreset: Record<SmoothingPreset, number> = { none: 0, light: 0.5, medium: 1.0, strong: 2.0 }
+    setP((s) => ({
+      ...s,
+      smoothing_preset: v,
+      smoothing: { ...s.smoothing, enabled: v !== 'none', sigma: sigmaByPreset[v] },
+    }))
+  }
 
   const handleRun = () => {
     if (!projectId) return
@@ -43,6 +57,11 @@ export default function Relief() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
+  const deps = checkDependencies(projectId || '', 'relief')
+  const runTooltip = deps.ok
+    ? undefined
+    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -53,8 +72,23 @@ export default function Relief() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
+
+      {!deps.ok && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
+        </div>
+      )}
+
+      <ModuleHeader
+        projectId={projectId || ''}
+        smoothingPreset={p.smoothing_preset}
+        resolutionPreset={p.output_resolution_preset}
+        onSmoothingChange={handleSmoothingPreset}
+        onResolutionChange={(v) => set('output_resolution_preset', v)}
+      />
 
       {/* Классификация рельефа */}
       <Card>
@@ -62,11 +96,26 @@ export default function Relief() {
           <Accordion title="Классификация «Рельеф»" badge="SMRF">
             <div className="space-y-4">
               <div className="flex flex-wrap gap-5">
-                <Radio checked={p.filter_method === 'smrf'} onChange={() => set('filter_method', 'smrf')} label="SMRF" />
-                <Radio checked={p.filter_method === 'manual'} onChange={() => set('filter_method', 'manual')} label="Ручная" />
-                <Radio checked={p.filter_method === 'stat'} onChange={() => set('filter_method', 'stat')} label="Статистическая" />
-                <Radio checked={p.filter_method === 'range'} onChange={() => set('filter_method', 'range')} label="Перцентильная" />
-                <Radio checked={p.filter_method === 'kmeans'} onChange={() => set('filter_method', 'kmeans')} label="Outlier" />
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'smrf'} onChange={() => set('filter_method', 'smrf')} label="SMRF" />
+                  <InfoHint text={METHOD_TOOLTIPS.smrf} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'manual'} onChange={() => set('filter_method', 'manual')} label="Ручная" />
+                  <InfoHint text={METHOD_TOOLTIPS.manual} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'stat'} onChange={() => set('filter_method', 'stat')} label="Статистическая" />
+                  <InfoHint text={METHOD_TOOLTIPS.stat} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'range'} onChange={() => set('filter_method', 'range')} label="Перцентильная" />
+                  <InfoHint text={METHOD_TOOLTIPS.range} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'kmeans'} onChange={() => set('filter_method', 'kmeans')} label="Outlier" />
+                  <InfoHint text={METHOD_TOOLTIPS.kmeans} />
+                </span>
               </div>
 
               {p.filter_method === 'manual' && (
@@ -91,23 +140,25 @@ export default function Relief() {
                 </div>
               )}
 
-              <div className="border-t border-slate-100 pt-3">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры SMRF</span>
-                  <InfoHint text="Simple Morphological Filter — алгоритм выделения точек рельефа. Параметры по умолчанию: slope=0.2, window=16, threshold=0.45, scalar=1.2." />
+              {p.filter_method === 'smrf' && (
+                <div className="border-t border-slate-100 pt-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры SMRF</span>
+                    <InfoHint text="Simple Morphological Filter — алгоритм выделения точек рельефа. Параметры по умолчанию: slope=0.2, window=16, threshold=0.45, scalar=1.2." />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <Field label="slope"><NumberInput value={p.smrf.slope} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, slope: v })} /></Field>
+                    <Field label="window"><NumberInput value={p.smrf.window} onChange={(v) => set('smrf', { ...p.smrf, window: v })} /></Field>
+                    <Field label="threshold"><NumberInput value={p.smrf.threshold} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, threshold: v })} /></Field>
+                    <Field label="scalar"><NumberInput value={p.smrf.scalar} step={0.1} onChange={(v) => set('smrf', { ...p.smrf, scalar: v })} /></Field>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-4">
+                    <Checkbox checked={p.smrf.elm} onChange={(v) => set('smrf', { ...p.smrf, elm: v })} label="ELM-фильтр" />
+                    <Checkbox checked={p.smrf.outlier} onChange={(v) => set('smrf', { ...p.smrf, outlier: v })} label="Outlier-фильтр" />
+                    <Checkbox checked={p.smrf.cut_smrf} onChange={(v) => set('smrf', { ...p.smrf, cut_smrf: v })} label="Доп. отсечение" />
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Field label="slope"><NumberInput value={p.smrf.slope} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, slope: v })} /></Field>
-                  <Field label="window"><NumberInput value={p.smrf.window} onChange={(v) => set('smrf', { ...p.smrf, window: v })} /></Field>
-                  <Field label="threshold"><NumberInput value={p.smrf.threshold} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, threshold: v })} /></Field>
-                  <Field label="scalar"><NumberInput value={p.smrf.scalar} step={0.1} onChange={(v) => set('smrf', { ...p.smrf, scalar: v })} /></Field>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-4">
-                  <Checkbox checked={p.smrf.elm} onChange={(v) => set('smrf', { ...p.smrf, elm: v })} label="ELM-фильтр" />
-                  <Checkbox checked={p.smrf.outlier} onChange={(v) => set('smrf', { ...p.smrf, outlier: v })} label="Outlier-фильтр" />
-                  <Checkbox checked={p.smrf.cut_smrf} onChange={(v) => set('smrf', { ...p.smrf, cut_smrf: v })} label="Доп. отсечение" />
-                </div>
-              </div>
+              )}
             </div>
           </Accordion>
         </CardPad>
@@ -138,18 +189,30 @@ export default function Relief() {
             <Accordion title="Производные слои">
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Checkbox checked={p.derivatives.slopes} onChange={(v) => set('derivatives', { ...p.derivatives, slopes: v })} label="Карта уклонов" />
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox checked={p.derivatives.slopes} onChange={(v) => set('derivatives', { ...p.derivatives, slopes: v })} label="Карта уклонов" />
+                    <InfoHint text="Расчёт угла наклона поверхности в градусах от ЦМР. slopes_res — разрешение выходного растра уклонов в метрах." />
+                  </span>
                   <NumberInput value={p.derivatives.slopes_res} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, slopes_res: v })} disabled={!p.derivatives.slopes} className="w-28" />
                 </div>
                 <div className="flex items-center justify-between">
-                  <Checkbox checked={p.derivatives.aspect} onChange={(v) => set('derivatives', { ...p.derivatives, aspect: v })} label="Карта экспозиций" />
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox checked={p.derivatives.aspect} onChange={(v) => set('derivatives', { ...p.derivatives, aspect: v })} label="Карта экспозиций" />
+                    <InfoHint text="Направление уклона поверхности (азимут, 0-360°). aspect_res — разрешение выходного растра экспозиций в метрах." />
+                  </span>
                   <NumberInput value={p.derivatives.aspect_res} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, aspect_res: v })} disabled={!p.derivatives.aspect} className="w-28" />
                 </div>
                 <div>
-                  <Checkbox checked={p.derivatives.tpi} onChange={(v) => set('derivatives', { ...p.derivatives, tpi: v })} label="TPI (трёхмасштабный)" />
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox checked={p.derivatives.tpi} onChange={(v) => set('derivatives', { ...p.derivatives, tpi: v })} label="TPI (трёхмасштабный)" />
+                    <InfoHint text="Topographic Position Index — отклонение высоты точки от среднего в окрестности. Три радиуса (мелкий/средний/крупный) для выявления форм рельефа разного масштаба." />
+                  </span>
                   {p.derivatives.tpi && (
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs text-slate-500">Радиусы, м:</span>
+                      <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                        Радиусы, м:
+                        <InfoHint text="Три радиуса поиска в метрах: мелкий (детали), средний (формы), крупный (контекст)." />
+                      </span>
                       {[0, 1, 2].map((i) => (
                         <NumberInput
                           key={i} className="w-20"
@@ -164,7 +227,10 @@ export default function Relief() {
                   )}
                 </div>
                 <div className="flex items-center justify-between">
-                  <Checkbox checked={p.derivatives.interpolation} onChange={(v) => set('derivatives', { ...p.derivatives, interpolation: v })} label="Интерполяция (IDW)" />
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox checked={p.derivatives.interpolation} onChange={(v) => set('derivatives', { ...p.derivatives, interpolation: v })} label="Интерполяция (IDW)" />
+                    <InfoHint text="Inverse Distance Weighting — интерполяция ЦМР обратно взвешенным расстоянием. inter_amp — амплитуда сглаживания." />
+                  </span>
                   <NumberInput value={p.derivatives.inter_amp} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, inter_amp: v })} disabled={!p.derivatives.interpolation} className="w-28" />
                 </div>
               </div>
@@ -173,10 +239,10 @@ export default function Relief() {
         </Card>
       </div>
 
-      {/* Высоты + векторные слои */}
+      {/* Высоты + TIN */}
       <Card>
         <CardPad>
-          <Accordion title="Высоты и векторные слои">
+          <Accordion title="Высоты и TIN">
             <div className="space-y-5">
               <div>
                 <Checkbox checked={p.heights.enabled} onChange={(v) => set('heights', { ...p.heights, enabled: v })} label="Извлечь высоты" />
@@ -189,21 +255,7 @@ export default function Relief() {
                 </div>
               </div>
               <div className="border-t border-slate-100 pt-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Горизонтали</span>
-                <div className="mt-2 flex flex-wrap gap-4">
-                  {[0.5, 2, 5, 10].map((h) => (
-                    <Checkbox
-                      key={h}
-                      checked={p.vectors.horizontals.includes(h)}
-                      onChange={(v) => {
-                        const hor = v ? [...p.vectors.horizontals, h] : p.vectors.horizontals.filter((x) => x !== h)
-                        set('vectors', { ...p.vectors, horizontals: hor.sort((a, b) => a - b) })
-                      }}
-                      label={`${h} м`}
-                    />
-                  ))}
-                  <Checkbox checked={p.vectors.tin} onChange={(v) => set('vectors', { ...p.vectors, tin: v })} label="TIN (DXF)" />
-                </div>
+                <Checkbox checked={p.vectors.tin} onChange={(v) => set('vectors', { ...p.vectors, tin: v })} label="TIN (DXF)" />
               </div>
             </div>
           </Accordion>

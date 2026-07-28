@@ -17,6 +17,24 @@ export interface Project {
 
 export type ProjectStatus = 'empty' | 'uploaded' | 'processing' | 'done' | 'error'
 
+export type SmoothingPreset = 'none' | 'light' | 'medium' | 'strong'
+export type ResolutionPreset = 'native' | '0.1m' | '0.25m' | '0.5m' | '1m' | '2m'
+
+export interface ReliefSource {
+  kind: 'system' | 'upload'
+  system_session_id?: string
+  upload_path?: string
+}
+
+export interface LoggingCategoryTable {
+  rows: {
+    category: string
+    height: number
+    slope: number
+    density: number
+  }[]
+}
+
 export interface Scene {
   id: string
   afs_dir?: string
@@ -110,7 +128,7 @@ export interface Job {
   type: JobType
   status: JobStatus
   progress: number
-  session_id?: string // генерируется стором при addJob
+  session_id?: string
   tiles_total: number
   tiles_done: number
   tiles_failed: number
@@ -119,8 +137,9 @@ export interface Job {
   tiles: Tile[]
   started_at?: string
   finished_at?: string
-  output_dir?: string // корневой каталог сессии: results/<project>/<type>/session-<id> (Блок Г)
+  output_dir?: string
   params: ReliefParams | ForestParams | WaterParams
+  recompute_of?: string
 }
 
 // ---- Параметры: Рельеф (#8,9,10,14) --------------------------------------
@@ -153,6 +172,8 @@ export interface ReliefParams {
     order: number
     window: number
   }
+  smoothing_preset: SmoothingPreset
+  output_resolution_preset: ResolutionPreset
   derivatives: {
     slopes: boolean
     slopes_res: number
@@ -184,14 +205,12 @@ export interface ForestParams {
     enabled: boolean
     threshold_surface: number
     threshold_shrub: number
-    channels: { chm: boolean; its: boolean; den: boolean }
+    channels: { chm: boolean }
     median_window: number
   }
   detection: {
-    method: 'yolov5' | 'watershed' | 'both'
-    sample_size: number
-    bound: number
-    season: 'summer' | 'winter'
+    method: 'yolov5' | 'watershed'
+    vegetation_state: 'active' | 'absent'
   }
   stats: {
     enabled: boolean
@@ -209,18 +228,12 @@ export interface ForestParams {
       dist_near: number
       diam: number
     }
+    table: LoggingCategoryTable
   }
-  extras: {
-    fire: boolean
-    fire_res: number
-    fire_sm: number
-    wind: boolean
-    wind_res: number
-    wind_sm: number
-    tlo: boolean
-    peaks: boolean
-    peak_size: number
-  }
+  smoothing_preset: SmoothingPreset
+  output_resolution_preset: ResolutionPreset
+  dsm_source: ReliefSource
+  derivatives_source: ReliefSource
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
@@ -228,23 +241,11 @@ export interface ForestParams {
 export interface WaterParams {
   segment: {
     threshold: number
-    sample_size: number
-    bound: number
     smooth: number
-    resolution: number
   }
-  swamp: {
-    segment: boolean
-    threshold: number
-    smooth: number
-    resolution: number
-    classify: boolean
-  }
-  buffers: {
-    coastal_m: number
-    protective_m: number
-    water_protection_m: number
-  }
+  smoothing_preset: SmoothingPreset
+  output_resolution_preset: ResolutionPreset
+  cmd_source: ReliefSource
 }
 
 // ---- Выходные артефакты (Блок Г) -----------------------------------------
