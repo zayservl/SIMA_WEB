@@ -1,13 +1,20 @@
 """Медианный фильтр.
 
-Порт из legacy `processings/median_filter.py`. Без изменений — scipy.signal.medfilt.
+Порт из legacy `processings/median_filter.py`.
+
+Использует scipy.ndimage.median_filter(mode="nearest") вместо исходного
+scipy.signal.medfilt: medfilt дополняет край растра нулями, из-за чего в углах
+и на границе окно фильтра оказывается в основном заполнено нулевым паддингом
+и валидные краевые пиксели ошибочно помечаются как nodata (см. mask_filtered
+ниже). mode="nearest" продолжает граничные значения растра, что не искажает
+маску валидности у края.
 """
 
 from __future__ import annotations
 
 import os
 import rasterio
-import scipy.signal
+from scipy.ndimage import median_filter
 import numpy as np
 
 
@@ -38,8 +45,8 @@ def med_filter(image_path: str, window: int) -> None:
             arr_flat = np.where(arr_flat == val, np.median(arr_no_nd), arr_flat)
         arr_data = arr_flat.reshape(shape)
 
-        filtered_data = scipy.signal.medfilt(arr_data.copy(), int(window))
-        mask_filtered = scipy.signal.medfilt(mask.copy().astype(float), int(window))
+        filtered_data = median_filter(arr_data.copy(), size=int(window), mode="nearest")
+        mask_filtered = median_filter(mask.copy().astype(float), size=int(window), mode="nearest")
 
         for i in range(mask_filtered.shape[0]):
             for j in range(mask_filtered.shape[1]):

@@ -22,6 +22,8 @@ import numpy as np
 import rasterio
 from pyproj import CRS, Geod
 
+from .status import FailedTile
+
 
 @dataclass
 class AfsReport:

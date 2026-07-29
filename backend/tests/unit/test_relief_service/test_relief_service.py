@@ -91,8 +91,11 @@ class TestContract:
 
     def test_filter_kwargs_normalization(self):
         from sima_relief_service.contract import ReliefParams, FilterParams, filter_kwargs
+        # spp_min/spp_max приходят из UI-контракта в процентах 0-100
+        # (src/api/types.ts, src/pages/Relief.tsx), filter_kwargs переводит их
+        # в долю 0.0-1.0, которую ожидает RangeFilter.
         p = ReliefParams(filter=FilterParams(spm_min=-5, spm_max=30, mean_k=8, mult=2.5,
-                                              spp_min=0.0, spp_max=0.95))
+                                              spp_min=0.0, spp_max=95.0))
         kw = filter_kwargs(p)
         assert kw["z_min"] == -5 and kw["z_max"] == 30
         assert kw["neighbours"] == 8 and kw["multiplier"] == 2.5
