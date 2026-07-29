@@ -21,6 +21,7 @@ from sima_dem_core.crop import Crop
 from sima_dem_core.filters import ManualFilter, StatFilter, RangeFilter, OutlierFilter
 from sima_dem_core.height import get_every_nth
 from sima_dem_core.raster.contours import generate_contours
+from sima_dem_core.raster.holes import px_from_metres
 from sima_dem_core.raster.tpi import calculate_tpi
 from sima_dem_dsm.dsm import DSMBuilder, DSMConfig
 from sima_dem_ground.ground import GroundProcessing, FillConfig, RasterOutputConfig
@@ -108,7 +109,8 @@ def step_dtm(
         cut_smrf=params.smrf.cut_smrf,
         fill=FillConfig(fill_holes=params.derivatives.interpolation,
                          max_search_distance=params.derivatives.inter_amp,
-                         fallback_to_min_z=True),
+                         fallback_to_min_z=True,
+                         edge_extrapolation_m=params.derivatives.edge_extrapolation_m),
         raster_out=RasterOutputConfig(output_type="idw"),
     )
     gp.get_raster(las_path, crs_wkt=crs, out_path=ground_las)
@@ -138,6 +140,7 @@ def step_dsm(
         interpolate=params.dsm.interpolate,
         fill_holes=params.dsm.fill_holes,
         max_search_distance=params.dsm.max_search_distance,
+        edge_extrapolation_m=params.dsm.edge_extrapolation_m,
     )
     builder = DSMBuilder(output=out_dir, crs=crs, config=cfg)
     dsm_path = builder.build(las_path, crs_wkt=crs, out_path=out_path)
@@ -159,6 +162,8 @@ def step_smooth(dtm_path: str, params: ReliefParams, out_dir: str, resolution: f
         order=params.smoothing.order, window_size=params.smoothing.window,
         fill_holes=params.derivatives.interpolation,
         max_search_distance=params.derivatives.inter_amp,
+        max_extrapolation_px=px_from_metres(
+            params.derivatives.edge_extrapolation_m, resolution),
     )
     return out_path
 

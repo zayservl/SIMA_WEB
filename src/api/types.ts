@@ -183,6 +183,8 @@ export interface ReliefParams {
     tpi_radii: number[]
     interpolation: boolean
     inter_amp: number
+    /** Допустимая экстраполяция ЦМР за границу валидной области, м (0 — только внутренние дыры). */
+    edge_extrapolation_m: number
   }
   heights: {
     enabled: boolean

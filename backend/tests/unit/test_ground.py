@@ -6,7 +6,7 @@ import numpy as np
 import rasterio
 from pathlib import Path
 
-from sima_dem_ground.ground import GroundProcessing
+from sima_dem_ground.ground import FillConfig, GroundProcessing
 
 
 def _make_ground_las(path: str, n: int = 500) -> str:
@@ -82,8 +82,65 @@ class TestGroundProcessing:
         assert "test_dem.tif" in raster
         assert "test_dem_smooth.tif" in smoothed
 
+    @staticmethod
+    def _write_dem(path: str, data: np.ndarray) -> str:
+        profile = {
+            "driver": "GTiff", "dtype": "float32", "nodata": -9999.0,
+            "width": data.shape[1], "height": data.shape[0], "count": 1,
+            "crs": "EPSG:32642",
+            "transform": rasterio.transform.from_origin(0, data.shape[0], 1, 1),
+        }
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(data, 1)
+        return path
+
+    def test_interpolate_leaves_edge_gap_when_extrapolation_disabled(self, tmp_path):
+        """При edge_extrapolation_m=0 пустота у рамки растра не заполняется."""
+        data = np.full((20, 20), 100.0, dtype=np.float32)
+        data[:, 15:] = -9999.0
+        tif = self._write_dem(str(tmp_path / "edge_dem.tif"), data)
+        gp = GroundProcessing(
+            output=str(tmp_path), resolution=1.0, crs="EPSG:32642",
+            interpolate=True, fill=FillConfig(edge_extrapolation_m=0.0),
+        )
+        gp._interpolate(tif)
+        with rasterio.open(tif) as src:
+            result = src.read(1)
+        assert np.all(result[:, 15:] == -9999.0)
+
+    def test_interpolate_fills_edge_gap_within_extrapolation(self, tmp_path):
+        """При edge_extrapolation_m>0 пустота заполняется на заданную глубину."""
+        data = np.full((20, 20), 100.0, dtype=np.float32)
+        data[:, 15:] = -9999.0
+        tif = self._write_dem(str(tmp_path / "edge_dem.tif"), data)
+        gp = GroundProcessing(
+            output=str(tmp_path), resolution=1.0, crs="EPSG:32642",
+            interpolate=True, fill=FillConfig(edge_extrapolation_m=3.0),
+        )
+        gp._interpolate(tif)
+        with rasterio.open(tif) as src:
+            result = src.read(1)
+        assert np.all(result[:, 15:18] != -9999.0)   # в пределах 3 м
+        assert np.all(result[:, 19] == -9999.0)      # 5 м — за пределом
+
+    def test_extrapolation_depth_scales_with_resolution(self, tmp_path):
+        """Глубина задаётся в метрах и пересчитывается через разрешение растра."""
+        data = np.full((20, 20), 100.0, dtype=np.float32)
+        data[:, 15:] = -9999.0
+        tif = self._write_dem(str(tmp_path / "res_dem.tif"), data)
+        # res=0.5 м/px → 2 м = 4 пикселя
+        gp = GroundProcessing(
+            output=str(tmp_path), resolution=0.5, crs="EPSG:32642",
+            interpolate=True, fill=FillConfig(edge_extrapolation_m=2.0),
+        )
+        gp._interpolate(tif)
+        with rasterio.open(tif) as src:
+            result = src.read(1)
+        assert np.all(result[:, 15:19] != -9999.0)
+        assert np.all(result[:, 19] == -9999.0)
+
     def test_interpolate_fills_nodata(self, tmp_path):
-        """DTM интерполирует внутренние дырки, краевые nodata остаются."""
+        """Внутренние дырки заполняются (без учёта краевой экстраполяции)."""
         data = np.full((20, 20), 100.0, dtype=np.float32)
         data[5:10, 5:10] = -9999.0
         profile = {

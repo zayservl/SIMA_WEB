@@ -175,6 +175,7 @@ def default_params(crs_wkt: str, resolution: float = 1.0) -> ReliefParams:
             aspect=True, aspect_res=resolution,
             tpi=True, tpi_radii=[270, 810, 2430],
             interpolation=True, inter_amp=100,
+            edge_extrapolation_m=5.0,
         ),
         vectors=VectorsParams(horizontals=[0.5, 2.0, 5.0, 10.0], tin=True),
         heights=HeightsParams(enabled=True, source="las", step=10),

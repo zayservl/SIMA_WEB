@@ -20,6 +20,7 @@ from rasterio.fill import fillnodata
 from osgeo import gdal
 
 from sima_dem_core.check_classification import CheckClassification
+from sima_dem_core.raster.holes import fillable_mask, px_from_metres
 
 
 @dataclass
@@ -50,6 +51,11 @@ class FillConfig:
     max_search_distance: int = 100
     smoothing_iterations: int = 0
     fallback_to_min_z: bool = True
+    # Насколько (в метрах) допустимо экстраполировать за границу валидной
+    # области. 0 — только внутренние дыры, как было исторически; такое
+    # поведение выбрасывало все пустоты, касающиеся рамки растра, даже
+    # вплотную к данным. См. sima_dem_core.raster.holes.
+    edge_extrapolation_m: float = 5.0
 
 
 @dataclass
@@ -264,7 +270,11 @@ class GroundProcessing:
             print("gdal SetProjection failed:", ee)
 
     def _interpolate(self, raster: str) -> None:
-        """Интерполирует внутренние пустоты растра через fillnodata."""
+        """Интерполирует пустоты растра через fillnodata.
+
+        Заполняются внутренние дыры и, если задан `fill.edge_extrapolation_m`,
+        пустоты не далее этого расстояния от валидных данных.
+        """
         with rasterio.open(raster) as src:
             profile = src.profile
             arr = src.read(1)
@@ -274,9 +284,9 @@ class GroundProcessing:
         if nodata is None:
             return
 
-        from scipy.ndimage import binary_fill_holes
         valid = mask == 255
-        holes = binary_fill_holes(valid) & ~valid
+        holes = fillable_mask(
+            valid, px_from_metres(self.fill.edge_extrapolation_m, self.resolution))
         if not np.any(holes):
             return
 

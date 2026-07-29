@@ -62,6 +62,7 @@ class DsmParams:
     interpolate: bool = True
     fill_holes: bool = True
     max_search_distance: int = 100
+    edge_extrapolation_m: float = 5.0  # см. DerivativesParams.edge_extrapolation_m
 
 
 @dataclass
@@ -74,6 +75,10 @@ class DerivativesParams:
     tpi_radii: list = field(default_factory=lambda: [270, 810, 2430])
     interpolation: bool = True
     inter_amp: int = 100
+    # Допустимая экстраполяция ЦМР за границу валидной области, м. Управляет
+    # заполнением пустот в ЦМР и при сглаживании. 0 — только внутренние дыры
+    # (пустоты у рамки растра остаются незаполненными, историческое поведение).
+    edge_extrapolation_m: float = 5.0
 
 
 @dataclass

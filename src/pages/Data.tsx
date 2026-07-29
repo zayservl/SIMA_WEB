@@ -46,6 +46,7 @@ const PARAM_LABELS: Record<string, string> = {
   tpi_radii: 'Радиусы TPI',
   interpolation: 'Интерполяция',
   inter_amp: 'Амплитуда интерп.',
+  edge_extrapolation_m: 'Экстраполяция края, м',
   heights: 'Высоты',
   source: 'Источник',
   step: 'Шаг',

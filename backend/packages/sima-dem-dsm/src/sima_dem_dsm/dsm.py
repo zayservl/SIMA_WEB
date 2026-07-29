@@ -17,6 +17,8 @@ import numpy as np
 from rasterio.fill import fillnodata
 from osgeo import gdal
 
+from sima_dem_core.raster.holes import fillable_mask, px_from_metres
+
 
 @dataclass
 class DSMConfig:
@@ -29,6 +31,9 @@ class DSMConfig:
     fill_holes: bool = True
     max_search_distance: int = 100
     smoothing_iterations: int = 0
+    # Допустимая экстраполяция за границу валидной области, м (0 — только
+    # внутренние дыры). См. sima_dem_core.raster.holes.
+    edge_extrapolation_m: float = 5.0
 
 
 class DSMBuilder:
@@ -72,12 +77,12 @@ class DSMBuilder:
         DSMBuilder.execute(pipeline)
 
     def _interpolate(self, raster: str) -> None:
-        """Заполнить внутренние дырки без экстраполяции краёв.
+        """Заполнить внутренние дырки и, опционально, приграничные пустоты.
 
-        "Дырка" — nodata-регион, полностью окружённый валидными данными
-        (scipy.ndimage.binary_fill_holes), а не только 1-пиксельная кайма
-        вокруг валидной области — иначе внутренние дырки шире ~2px остаются
-        незаполненными (см. корректную реализацию в sima_dem_ground.ground).
+        "Дырка" — nodata-регион, полностью окружённый валидными данными, а не
+        только 1-пиксельная кайма вокруг валидной области. Дополнительно, если
+        задан `edge_extrapolation_m`, заполняются пустоты не далее этого
+        расстояния от валидных данных (см. sima_dem_core.raster.holes).
         """
         cfg = self.config
         if not cfg.fill_holes:
@@ -91,9 +96,9 @@ class DSMBuilder:
         if nodata is None:
             return
 
-        from scipy.ndimage import binary_fill_holes
         valid = mask == 255
-        holes = binary_fill_holes(valid) & ~valid
+        holes = fillable_mask(
+            valid, px_from_metres(cfg.edge_extrapolation_m, cfg.resolution))
         if not np.any(holes):
             return
 
