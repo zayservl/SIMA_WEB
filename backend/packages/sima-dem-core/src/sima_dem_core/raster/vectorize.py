@@ -28,8 +28,7 @@ def binarize(input_raster: str, out_raster: str, t_min: float, t_max: float) -> 
     with rasterio.open(input_raster) as source:
         profile = source.profile
         array = source.read(1).astype(float)
-        bin_array = np.array(np.clip(array, t_min, t_max) // t_max, dtype=np.uint8)
-        bin_array = np.invert(bin_array.astype(bool)).astype(np.uint8)
+        bin_array = ((array >= t_min) & (array <= t_max)).astype(np.uint8)
         profile.update(dtype="uint8", count=1, nodata=None)
         with rasterio.open(out_raster, "w", **profile) as dst:
             dst.write(bin_array, 1)

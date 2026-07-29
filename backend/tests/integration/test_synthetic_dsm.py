@@ -11,7 +11,7 @@ import laspy
 import rasterio
 from pathlib import Path
 
-from sima_dem_dsm.dsm import DSMBuilder
+from sima_dem_dsm.dsm import DSMBuilder, DSMConfig
 from sima_dem_ground.ground import GroundProcessing
 
 # CRS for synthetic test
@@ -153,3 +153,121 @@ class TestSyntheticDSMConvergence:
         # Paraboloid: Z = 100 + 0.001*(x^2+y^2), max at corner: 100 + 0.001*(49^2+49^2) ≈ 104.8
         assert np.min(valid) >= 95.0, f"DTM min too low: {np.min(valid)}"
         assert np.max(valid) <= 110.0, f"DTM max too high: {np.max(valid)}"
+
+
+def _make_synthetic_ground_and_canopy_las(
+    path: str, grid_size: int = 50, resolution: float = 1.0, canopy_offset: float = 15.0,
+) -> str:
+    """Create a synthetic LAS with co-located ground + canopy returns.
+
+    At every (x, y) of the same known paraboloid grid used by
+    `_make_synthetic_ground_las`, this emits TWO points: a ground return
+    (Classification=2, Z=ground) and a "canopy" return (Classification=5,
+    high vegetation, Z=ground+canopy_offset) — modelling a first/last-return
+    pair over vegetation. Ground truth for both surfaces is analytical.
+    """
+    xs = np.repeat(np.arange(0, grid_size, resolution, dtype=np.float64), grid_size)
+    ys = np.tile(np.arange(0, grid_size, resolution, dtype=np.float64), grid_size)
+    ground_z = _expected_surface(xs, ys)
+    canopy_z = ground_z + canopy_offset
+
+    all_x = np.concatenate([xs, xs])
+    all_y = np.concatenate([ys, ys])
+    all_z = np.concatenate([ground_z, canopy_z])
+    classification = np.concatenate([
+        np.full(len(xs), 2, dtype=np.uint8),  # ground
+        np.full(len(xs), 5, dtype=np.uint8),  # high vegetation
+    ])
+
+    las = laspy.create(point_format=3, file_version="1.2")
+    las.x = all_x + 500000.0
+    las.y = all_y + 6000000.0
+    las.z = all_z
+    las.classification = classification
+    las.write(path)
+    return path
+
+
+class TestSyntheticDSMBuilderConvergence:
+    """Non-circular DSMBuilder (output_type='max') convergence test.
+
+    Prior to this test, no test in the suite exercised DSMBuilder against a
+    known analytical surface — `test_dsm_convergence.py` and the DTM tests
+    above only validate GroundProcessing (DTM/IDW), despite naming that
+    suggests DSM coverage. This test builds both a DSM and a DTM from the
+    SAME synthetic LAS (ground + co-located canopy returns) and checks that
+    DSM (max) recovers the higher canopy surface while DTM (Classification==2
+    only) recovers the lower ground surface — i.e. DSMBuilder's max-rasterization
+    genuinely picks the highest point per cell, not merely whichever point
+    happens to survive PDAL's filters.sample thinning.
+    """
+
+    def test_dsm_recovers_canopy_surface_above_dtm(self, tmp_path):
+        grid_size = 40
+        canopy_offset = 15.0
+        las_path = str(tmp_path / "synthetic_ground_canopy.las")
+        _make_synthetic_ground_and_canopy_las(
+            las_path, grid_size=grid_size, resolution=1.0, canopy_offset=canopy_offset,
+        )
+
+        out_dir = str(tmp_path / "out")
+        Path(out_dir).mkdir()
+
+        # DSM (ЦММ): should pick up the canopy (higher) surface.
+        dsm_builder = DSMBuilder(
+            output=out_dir, crs=SYNTH_CRS,
+            config=DSMConfig(resolution=1.0, interpolate=True, max_search_distance=10),
+        )
+        dsm_path = dsm_builder.build(las_path)
+
+        # DTM (ЦМР): filters.range keeps only Classification==2 → ground only.
+        gp = GroundProcessing(
+            output=out_dir, resolution=1.0, crs=SYNTH_CRS,
+            save_ground_las=False, interpolate=True, interpol_dist=10,
+        )
+        gp.get_raster(las_path)
+        dtm_path = gp.raster[0]
+
+        def _read_valid(raster_path: str) -> np.ndarray:
+            with rasterio.open(raster_path) as src:
+                arr = src.read(1).astype(float)
+                nodata = src.nodata
+            return arr[arr != nodata] if nodata is not None else arr.flatten()
+
+        dsm_valid = _read_valid(dsm_path)
+        dtm_valid = _read_valid(dtm_path)
+        assert len(dsm_valid) > 0 and len(dtm_valid) > 0
+
+        # 1. DSM must sit close to the analytical canopy (ground+offset) surface,
+        #    not the bare ground surface -- proof that output_type="max" actually
+        #    selects the higher of the two co-located returns.
+        dsm_mean = float(np.mean(dsm_valid))
+        dtm_mean = float(np.mean(dtm_valid))
+        expected_ground_mean = float(np.mean(_expected_surface(
+            np.arange(0, grid_size, 1.0), np.arange(0, grid_size, 1.0))))
+
+        print(f"DSM mean={dsm_mean:.4f}, DTM mean={dtm_mean:.4f}, "
+              f"expected ground mean~={expected_ground_mean:.4f}, offset={canopy_offset}")
+
+        # DSM mean should be within 20% of (ground_mean + offset); a "max" writer
+        # that silently degraded to ground-only or to a mean/last-point value
+        # would fail this by a wide margin.
+        expected_dsm_mean = expected_ground_mean + canopy_offset
+        assert abs(dsm_mean - expected_dsm_mean) / expected_dsm_mean < 0.20, (
+            f"DSM does not converge to canopy surface: dsm_mean={dsm_mean:.3f}, "
+            f"expected~={expected_dsm_mean:.3f}"
+        )
+
+        # 2. DTM must stay close to the bare ground surface (i.e. correctly
+        #    excludes the Classification=5 canopy returns).
+        assert abs(dtm_mean - expected_ground_mean) / expected_ground_mean < 0.10, (
+            f"DTM does not converge to ground surface: dtm_mean={dtm_mean:.3f}, "
+            f"expected~={expected_ground_mean:.3f}"
+        )
+
+        # 3. DSM must sit measurably above the co-located DTM by ~canopy_offset —
+        #    the core "surface model sits at/above terrain model" invariant.
+        gap = dsm_mean - dtm_mean
+        assert abs(gap - canopy_offset) / canopy_offset < 0.30, (
+            f"DSM-DTM gap {gap:.3f} does not match expected canopy offset {canopy_offset}"
+        )

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { Project, Scene, MaterialAssessment, Job, ReliefParams, ForestParams, WaterParams, Tile } from '@/api/types'
 import { generateTiles, newSessionId } from '@/lib/tiles'
 
@@ -91,118 +92,130 @@ const demoProject: Project = {
   scene: { id: 'scene-001', afs_dir: '/data/demo/afs', vls_dir: '/data/demo/vls', target_crs: '', reproject: true, deterministic: true, seed: 42 },
 }
 
-export const useProjectStore = create<ProjectStore>((set) => ({
-  projects: [demoProject],
-  assessment: {
-    'demo-001': {
-      afs: {
-        crs: '', extent_area_km2: 1.0, resolution_m: 0.14, ofp_scale: '1:1400',
-        tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
+// Стор сохраняется в localStorage: без этого перезагрузка страницы (или
+// прямой переход по URL) сбрасывает все посчитанные сессии Рельефа/Древостоя,
+// и зависимые модули (Древостой/Вода) теряют возможность выбрать «Рассчитанную
+// в системе» сессию, хотя задача была успешно завершена.
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set) => ({
+      projects: [demoProject],
+      assessment: {
+        'demo-001': {
+          afs: {
+            crs: '', extent_area_km2: 1.0, resolution_m: 0.14, ofp_scale: '1:1400',
+            tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
+          },
+          vls: {
+            crs: '', extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
+            tlo_height_range_m: [22.08, 1031.87],
+            tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
+          },
+        },
       },
-      vls: {
-        crs: '', extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
-        tlo_height_range_m: [22.08, 1031.87],
-        tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
-      },
-    },
-  },
-  jobs: [],
-  createProject: (name) => {
-    const p: Project = {
-      id: 'p-' + Math.random().toString(36).slice(2, 9),
-      name,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      status: 'empty',
-      scene: { id: 's-' + Math.random().toString(36).slice(2, 9), reproject: true, deterministic: true, seed: 42 },
-    }
-    set((s) => ({ projects: [p, ...s.projects] }))
-    return p
-  },
-  updateProject: (projectId, patch) =>
-    set((s) => ({
-      projects: s.projects.map((p) => (p.id === projectId ? { ...p, ...patch, updated_at: new Date().toISOString() } : p)),
-    })),
-  updateScene: (projectId, patch) =>
-    set((s) => ({
-      projects: s.projects.map((p) =>
-        p.id === projectId ? { ...p, scene: { ...p.scene, ...patch }, updated_at: new Date().toISOString() } : p,
-      ),
-    })),
-  setAssessment: (projectId, a) => set((s) => ({ assessment: { ...s.assessment, [projectId]: a } })),
-  addJob: (job) =>
-    set((s) => {
-      // Нормализуем задачу: гарантированно есть tiles[], tiles_skipped, session_id.
-      const normalized: Job = {
-        ...job,
-        session_id: job.session_id ?? newSessionId(),
-        tiles_skipped: job.tiles_skipped ?? 0,
-        tiles: job.tiles && job.tiles.length > 0 ? job.tiles : generateTiles(job.type, job.tiles_total),
-      }
-      return { jobs: [normalized, ...s.jobs] }
-    }),
-  updateJob: (jobId, patch) =>
-    set((s) => ({ jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, ...patch } : j)) })),
-  recomputeJob: (jobId, tileIds, newParams) =>
-    set((s) => {
-      const src = s.jobs.find((j) => j.id === jobId)
-      if (!src) return s
-      const selectedTiles = tileIds
-        ? src.tiles.filter((t) => tileIds.includes(t.id))
-        : src.tiles
-      const newTiles: Tile[] = selectedTiles.map((t) => ({
-        id: 't-' + Math.random().toString(36).slice(2, 10),
-        name: t.name,
-        kind: t.kind,
-        status: 'queued' as const,
-        steps: t.steps.map((st) => ({ ...st, status: 'pending' as const, started_at: undefined, finished_at: undefined, duration_ms: undefined, message: undefined })),
-        retry_of: t.id,
-      }))
-      const newJob: Job = {
-        id: 'j-' + Math.random().toString(36).slice(2, 10),
-        project_id: src.project_id,
-        type: src.type,
-        status: 'queued',
-        progress: 0,
-        session_id: newSessionId(),
-        tiles_total: newTiles.length,
-        tiles_done: 0,
-        tiles_failed: 0,
-        tiles_skipped: 0,
-        failed_tiles: [],
-        tiles: newTiles,
-        params: newParams,
-        recompute_of: jobId,
-      }
-      return { jobs: [newJob, ...s.jobs] }
-    }),
-  stopTile: (jobId, tileId) =>
-    set((s) => ({
-      jobs: s.jobs.map((j) => {
-        if (j.id !== jobId) return j
-        const ts = new Date().toISOString()
-        const tiles = j.tiles.map((t) => {
-          if (t.id !== tileId || t.status !== 'running') return t
-          return {
-            ...t,
-            status: 'skipped' as const,
-            finished_at: ts,
-            current_step: undefined,
-            steps: t.steps.map((st) =>
-              st.status === 'running' ? { ...st, status: 'skipped' as const, finished_at: ts } : st
-            ),
-          }
-        })
-        const agg = recompute(tiles)
-        const processed = agg.tiles_done + agg.tiles_failed + agg.tiles_skipped
-        const hasActive = tiles.some((t) => t.status === 'running' || t.status === 'queued')
-        return {
-          ...j, tiles, ...agg,
-          progress: Math.round((processed / j.tiles_total) * 100),
-          status: hasActive ? j.status : ('cancelled' as const),
-          finished_at: hasActive ? j.finished_at : ts,
+      jobs: [],
+      createProject: (name) => {
+        const p: Project = {
+          id: 'p-' + Math.random().toString(36).slice(2, 9),
+          name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: 'empty',
+          scene: { id: 's-' + Math.random().toString(36).slice(2, 9), reproject: true, deterministic: true, seed: 42 },
         }
-      }),
-    })),
-  removeProject: (id) => set((s) => ({ projects: s.projects.filter((p) => p.id !== id) })),
-}))
+        set((s) => ({ projects: [p, ...s.projects] }))
+        return p
+      },
+      updateProject: (projectId, patch) =>
+        set((s) => ({
+          projects: s.projects.map((p) => (p.id === projectId ? { ...p, ...patch, updated_at: new Date().toISOString() } : p)),
+        })),
+      updateScene: (projectId, patch) =>
+        set((s) => ({
+          projects: s.projects.map((p) =>
+            p.id === projectId ? { ...p, scene: { ...p.scene, ...patch }, updated_at: new Date().toISOString() } : p,
+          ),
+        })),
+      setAssessment: (projectId, a) => set((s) => ({ assessment: { ...s.assessment, [projectId]: a } })),
+      addJob: (job) =>
+        set((s) => {
+          // Нормализуем задачу: гарантированно есть tiles[], tiles_skipped, session_id.
+          const normalized: Job = {
+            ...job,
+            session_id: job.session_id ?? newSessionId(),
+            tiles_skipped: job.tiles_skipped ?? 0,
+            tiles: job.tiles && job.tiles.length > 0 ? job.tiles : generateTiles(job.type, job.tiles_total),
+          }
+          return { jobs: [normalized, ...s.jobs] }
+        }),
+      updateJob: (jobId, patch) =>
+        set((s) => ({ jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, ...patch } : j)) })),
+      recomputeJob: (jobId, tileIds, newParams) =>
+        set((s) => {
+          const src = s.jobs.find((j) => j.id === jobId)
+          if (!src) return s
+          const selectedTiles = tileIds
+            ? src.tiles.filter((t) => tileIds.includes(t.id))
+            : src.tiles
+          const newTiles: Tile[] = selectedTiles.map((t) => ({
+            id: 't-' + Math.random().toString(36).slice(2, 10),
+            name: t.name,
+            kind: t.kind,
+            status: 'queued' as const,
+            steps: t.steps.map((st) => ({ ...st, status: 'pending' as const, started_at: undefined, finished_at: undefined, duration_ms: undefined, message: undefined })),
+            retry_of: t.id,
+          }))
+          const newJob: Job = {
+            id: 'j-' + Math.random().toString(36).slice(2, 10),
+            project_id: src.project_id,
+            type: src.type,
+            status: 'queued',
+            progress: 0,
+            session_id: newSessionId(),
+            tiles_total: newTiles.length,
+            tiles_done: 0,
+            tiles_failed: 0,
+            tiles_skipped: 0,
+            failed_tiles: [],
+            tiles: newTiles,
+            params: newParams,
+            recompute_of: jobId,
+          }
+          return { jobs: [newJob, ...s.jobs] }
+        }),
+      stopTile: (jobId, tileId) =>
+        set((s) => ({
+          jobs: s.jobs.map((j) => {
+            if (j.id !== jobId) return j
+            const ts = new Date().toISOString()
+            const tiles = j.tiles.map((t) => {
+              if (t.id !== tileId || t.status !== 'running') return t
+              return {
+                ...t,
+                status: 'skipped' as const,
+                finished_at: ts,
+                current_step: undefined,
+                steps: t.steps.map((st) =>
+                  st.status === 'running' ? { ...st, status: 'skipped' as const, finished_at: ts } : st
+                ),
+              }
+            })
+            const agg = recompute(tiles)
+            const processed = agg.tiles_done + agg.tiles_failed + agg.tiles_skipped
+            const hasActive = tiles.some((t) => t.status === 'running' || t.status === 'queued')
+            return {
+              ...j, tiles, ...agg,
+              progress: Math.round((processed / j.tiles_total) * 100),
+              status: hasActive ? j.status : ('cancelled' as const),
+              finished_at: hasActive ? j.finished_at : ts,
+            }
+          }),
+        })),
+      removeProject: (id) => set((s) => ({ projects: s.projects.filter((p) => p.id !== id) })),
+    }),
+    {
+      name: 'sima-project-store',
+      partialize: (s) => ({ projects: s.projects, assessment: s.assessment, jobs: s.jobs }),
+    },
+  ),
+)

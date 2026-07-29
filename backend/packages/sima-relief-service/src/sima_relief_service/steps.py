@@ -69,10 +69,12 @@ def step_filter(las_path: str, params: ReliefParams, out_dir: str) -> str:
         StatFilter(las_path, res, kw["stat_m"], out_path).filter()
     elif m == "range":
         RangeFilter(las_path, res, kw["range_min_pct"], kw["range_max_pct"], out_path).filter()
-    elif m == "outlier":
+    elif m in ("outlier", "kmeans"):
+        # "kmeans" — историческое имя значения FilterMethod в контракте UI
+        # (src/api/types.ts), которому в бэкенде соответствует OutlierFilter.
         OutlierFilter(las_path, res, kw["neighbours"], kw["multiplier"], out_path).filter()
     else:
-        return las_path
+        raise ValueError(f"Неизвестный filter_method: {m!r}")
     return out_path
 
 

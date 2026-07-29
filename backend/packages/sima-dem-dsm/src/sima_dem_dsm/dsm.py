@@ -72,7 +72,13 @@ class DSMBuilder:
         DSMBuilder.execute(pipeline)
 
     def _interpolate(self, raster: str) -> None:
-        """Заполнить внутренние дырки без экстраполяции краёв."""
+        """Заполнить внутренние дырки без экстраполяции краёв.
+
+        "Дырка" — nodata-регион, полностью окружённый валидными данными
+        (scipy.ndimage.binary_fill_holes), а не только 1-пиксельная кайма
+        вокруг валидной области — иначе внутренние дырки шире ~2px остаются
+        незаполненными (см. корректную реализацию в sima_dem_ground.ground).
+        """
         cfg = self.config
         if not cfg.fill_holes:
             return
@@ -80,25 +86,25 @@ class DSMBuilder:
             profile = src.profile
             arr = src.read(1)
             nodata = src.nodata
-            if nodata is None:
-                return
             mask = src.read_masks(1)
-            arr_filled = fillnodata(
-                arr.copy(), mask=mask,
-                max_search_distance=cfg.max_search_distance,
-                smoothing_iterations=cfg.smoothing_iterations)
 
-            from scipy.ndimage import binary_dilation
-            valid = mask == 255
-            dilated_valid = binary_dilation(valid, iterations=1)
-            border_mask = np.ones_like(mask, dtype=bool)
-            border_mask[1:-1, 1:-1] = False
-            was_nodata = (arr == nodata)
-            holes = was_nodata & dilated_valid & ~border_mask
-            keep_nodata = was_nodata & ~holes
-            arr_filled = np.where(keep_nodata, nodata, arr_filled)
+        if nodata is None:
+            return
+
+        from scipy.ndimage import binary_fill_holes
+        valid = mask == 255
+        holes = binary_fill_holes(valid) & ~valid
+        if not np.any(holes):
+            return
+
+        arr_filled = fillnodata(
+            arr.copy(), mask=mask,
+            max_search_distance=cfg.max_search_distance,
+            smoothing_iterations=cfg.smoothing_iterations)
+        arr = np.where(holes, arr_filled, arr)
+
         with rasterio.open(raster, "w", **profile) as dest:
-            dest.write_band(1, arr_filled)
+            dest.write_band(1, arr)
 
     def _set_projection(self, raster: str, crs_wkt: Optional[str]) -> None:
         if raster is None or crs_wkt is None:

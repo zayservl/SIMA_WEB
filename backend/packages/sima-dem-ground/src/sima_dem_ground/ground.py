@@ -165,9 +165,11 @@ class GroundProcessing:
             pipeline.append({"type": "filters.assign", "value": ["Classification = 1 WHERE Classification != 2"]})
             pipeline.append({"type": "writers.las", "filename": ground_las})
         pipeline += self._maybe_crop_stage()
+        # elm/outlier должны отработать до финального range-отбора Classification==2,
+        # иначе точки, помеченные ими как шум (класс 7), не отсеиваются перед растеризацией.
+        pipeline += _elm_outlier_stages()
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
-        pipeline += _elm_outlier_stages()
         pipeline.append(_writers_gdal_stage(raster, self.raster_out, self.resolution))
         return pipeline
 

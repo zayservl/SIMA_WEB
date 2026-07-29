@@ -30,11 +30,15 @@ backend/.pytest_cache/
 backend/htmlcov/
 backend/*.egg-info/
 backend/build/
-backend/dist/backend/.coverage
+backend/dist/
 *.egg-info/
 backend/.coverage
 backend/output/
 backend/output_relief_demo/
+
+# Внутренние материалы (не публиковать)
 Архитектурная концепция.pdf
-.gitignore
 Концептуализация работ на Q3 202.pdf
+
+# Локальное состояние инструмента omo (сессии/планы/черновики — не проектные данные)
+.omo/

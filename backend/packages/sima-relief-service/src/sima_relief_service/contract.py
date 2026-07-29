@@ -148,14 +148,20 @@ def filter_kwargs(p: ReliefParams) -> dict:
     stat: stat_m=mult (σ-кратность), neighbours=spr_num
     range: range_min_pct=spp_min, range_max_pct=spp_max
     outlier: neighbours=mean_k, multiplier=mult
+
+    spp_min/spp_max приходят из UI-контракта (src/api/types.ts) в процентах
+    0-100 (см. src/pages/Relief.tsx, defaults spp_min=1/spp_max=99) — RangeFilter
+    же ожидает долю 0.0-1.0, поэтому здесь деление на 100.
     """
     f = p.filter
+    spp_min = f.spp_min if f.spp_min is not None else 0.0
+    spp_max = f.spp_max if f.spp_max is not None else 100.0
     return {
         "z_min": f.spm_min if f.spm_min is not None else 0.0,
         "z_max": f.spm_max if f.spm_max is not None else 1000.0,
         "stat_m": f.mult if f.mult is not None else 2.0,
         "neighbours": f.mean_k if f.mean_k is not None else 8,
         "multiplier": f.mult if f.mult is not None else 2.0,
-        "range_min_pct": f.spp_min if f.spp_min is not None else 0.0,
-        "range_max_pct": f.spp_max if f.spp_max is not None else 1.0,
+        "range_min_pct": spp_min / 100.0,
+        "range_max_pct": spp_max / 100.0,
     }
