@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { NumberInput, Field, Select } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { WaterParams, Job, ReliefParams, ResolutionPreset } from '@/api/types'
+import type { WaterParams, Job, ResolutionPreset } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
@@ -45,18 +45,6 @@ export default function Water() {
     ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
     : []
 
-  // Источник уклонов — только те успешные сессии «Рельефа», где была отмечена
-  // «Карта уклонов»: без неё растра уклонов в результатах сессии нет.
-  const slopeJobs = projectId
-    ? jobs.filter(
-        (j) =>
-          j.project_id === projectId &&
-          j.type === 'relief' &&
-          j.status === 'success' &&
-          (j.params as ReliefParams).derivatives?.slopes,
-      )
-    : []
-
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -77,16 +65,12 @@ export default function Water() {
         </div>
       )}
 
-      {/* Шапка модуля: СК, разрешение + источники ЦМР и уклонов */}
+      {/* Шапка модуля: СК, разрешение + источник ЦМР */}
       <ModuleHeader
         projectId={projectId ?? ''}
         resolutionPreset={p.output_resolution_preset}
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
       >
-        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs text-slate-500">
-          Первый этап — выделение воды по АФС проекта (каталог из «Загрузки данных»); ЦМР и уклоны используются
-          для уточнения маски.
-        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-lg border border-slate-200 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
@@ -104,22 +88,9 @@ export default function Water() {
             {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
           </div>
 
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Уклоны</div>
-            <Select
-              value={p.slopes_source.system_session_id ?? ''}
-              onChange={(e) => set('slopes_source', { ...p.slopes_source, system_session_id: e.target.value || undefined })}
-            >
-              <option value="">— выбрать сессию —</option>
-              {slopeJobs.map((j) => (
-                <option key={j.id} value={j.session_id ?? j.id}>
-                  {j.session_id ?? j.id}
-                </option>
-              ))}
-            </Select>
-            {slopeJobs.length === 0 && (
-              <p className="hint-base mt-1.5">Нет сессий «Рельефа» с рассчитанной картой уклонов</p>
-            )}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-500">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник АФС</div>
+            Каталог АФС проекта из «Загрузки данных» — по нему строится маска воды.
           </div>
         </div>
       </ModuleHeader>

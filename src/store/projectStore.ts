@@ -3,7 +3,9 @@ import { persist } from 'zustand/middleware'
 import type { Project, Scene, MaterialAssessment, Job, ReliefParams, ForestParams, WaterParams, Tile } from '@/api/types'
 import { generateTiles, newSessionId } from '@/lib/tiles'
 
-// Демо-параметры по умолчанию (из текущего проекта)
+// Параметры по умолчанию. «Рельеф» отдаёт полный набор выходов — ЦМР, ЦММ,
+// TPI, уклоны и экспозиции включены изначально; сервис гейтит каждый шаг своим
+// флагом (service.py::_run_tile), поэтому флаги остаются в контракте.
 export const defaultReliefParams: ReliefParams = {
   filter_method: 'smrf',
   filter: { spm_min: 0, spm_max: 100, spr_num: 2, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
@@ -11,14 +13,14 @@ export const defaultReliefParams: ReliefParams = {
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   smoothing_preset: 'medium',
   output_resolution_preset: 'native',
-  // ЦММ по умолчанию включена: без неё «Древостою» нечего выбрать в источнике.
-  // В бэкенд-контракте dataclass-дефолт enabled=False — здесь демо-сценарий.
   dsm: { enabled: true, output_type: 'max', interpolate: true, fill_holes: true, max_search_distance: 100, edge_extrapolation_m: 5 },
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
     tpi: true, tpi_radii: [270, 810, 2430],
-    interpolation: false, inter_amp: 1, edge_extrapolation_m: 5,
+    // interpolation/inter_amp управляют заполнением пустот ЦМР (step_dtm →
+    // FillConfig): значения выровнены с DerivativesParams бэкенда (True/100).
+    interpolation: true, inter_amp: 100, edge_extrapolation_m: 5,
   },
   heights: { enabled: false, source: 'las', step: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
@@ -54,7 +56,6 @@ export const defaultWaterParams: WaterParams = {
   segment: { threshold: 0.7 },
   output_resolution_preset: 'native',
   dem_source: { kind: 'system' },
-  slopes_source: { kind: 'system' },
 }
 
 interface ProjectStore {

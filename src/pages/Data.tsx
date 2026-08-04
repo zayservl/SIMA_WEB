@@ -90,7 +90,6 @@ const PARAM_LABELS: Record<string, string> = {
   derivatives_source: 'Источник производных',
   segment: 'Сегментация',
   dem_source: 'Источник ЦМР',
-  slopes_source: 'Источник уклонов',
   mode: 'Определение параметров',
   kind: 'Тип',
   system_session_id: 'ID системной сессии',
