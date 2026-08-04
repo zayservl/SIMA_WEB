@@ -79,88 +79,38 @@ export default function Forest() {
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* Источник ЦМР */}
+          {/* Источник ЦМР — только рассчитанная в системе сессия «Рельефа» */}
           <div className="rounded-lg border border-slate-200 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
-            <div className="space-y-2">
-              <Radio
-                checked={p.dsm_source.kind === 'system'}
-                onChange={() => setSource('dsm_source', { kind: 'system', upload_path: undefined })}
-                label="Рассчитанная в системе"
-              />
-              {p.dsm_source.kind === 'system' && (
-                <Select
-                  value={p.dsm_source.system_session_id ?? ''}
-                  onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
-                >
-                  <option value="">— выбрать сессию —</option>
-                  {reliefJobs.map((j) => (
-                    <option key={j.id} value={j.session_id ?? j.id}>
-                      {j.session_id ?? j.id}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              <Radio
-                checked={p.dsm_source.kind === 'upload'}
-                onChange={() => setSource('dsm_source', { kind: 'upload', system_session_id: undefined })}
-                label="Загрузить .geotiff"
-              />
-              {p.dsm_source.kind === 'upload' && (
-                <Input
-                  type="file"
-                  accept=".tif,.tiff,.geotiff"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
-                      setSource('dsm_source', { upload_path: f.name })
-                    }
-                  }}
-                />
-              )}
-            </div>
+            <Select
+              value={p.dsm_source.system_session_id ?? ''}
+              onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
+            >
+              <option value="">— выбрать сессию —</option>
+              {reliefJobs.map((j) => (
+                <option key={j.id} value={j.session_id ?? j.id}>
+                  {j.session_id ?? j.id}
+                </option>
+              ))}
+            </Select>
+            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
           </div>
 
           {/* Источник производных рельефа */}
           <div className="rounded-lg border border-slate-200 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник производных рельефа</div>
-            <div className="space-y-2">
-              <Radio
-                checked={p.derivatives_source.kind === 'system'}
-                onChange={() => setSource('derivatives_source', { kind: 'system', upload_path: undefined })}
-                label="Рассчитанная в системе"
-              />
-              {p.derivatives_source.kind === 'system' && (
-                <Select
-                  value={p.derivatives_source.system_session_id ?? ''}
-                  onChange={(e) => setSource('derivatives_source', { system_session_id: e.target.value || undefined })}
-                >
-                  <option value="">— выбрать сессию —</option>
-                  {reliefJobs.map((j) => (
-                    <option key={j.id} value={j.session_id ?? j.id}>
-                      {j.session_id ?? j.id}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              <Radio
-                checked={p.derivatives_source.kind === 'upload'}
-                onChange={() => setSource('derivatives_source', { kind: 'upload', system_session_id: undefined })}
-                label="Загрузить .geotiff"
-              />
-              {p.derivatives_source.kind === 'upload' && (
-                <Input
-                  type="file"
-                  accept=".tif,.tiff,.geotiff"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
-                      setSource('derivatives_source', { upload_path: f.name })
-                    }
-                  }}
-                />
-              )}
-            </div>
+            <Select
+              value={p.derivatives_source.system_session_id ?? ''}
+              onChange={(e) => setSource('derivatives_source', { system_session_id: e.target.value || undefined })}
+            >
+              <option value="">— выбрать сессию —</option>
+              {reliefJobs.map((j) => (
+                <option key={j.id} value={j.session_id ?? j.id}>
+                  {j.session_id ?? j.id}
+                </option>
+              ))}
+            </Select>
+            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
           </div>
         </div>
       </ModuleHeader>

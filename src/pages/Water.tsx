@@ -4,10 +4,10 @@ import { useProjectStore, defaultWaterParams } from '@/store/projectStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Radio, NumberInput, Field, Input, Select } from '@/components/ui/controls'
+import { NumberInput, Field, Select } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { WaterParams, Job, ReliefSource, SmoothingPreset, ResolutionPreset } from '@/api/types'
+import type { WaterParams, Job, ReliefParams, ResolutionPreset } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
@@ -45,8 +45,17 @@ export default function Water() {
     ? jobs.filter((j) => j.project_id === projectId && j.type === 'forest' && j.status === 'success')
     : []
 
-  const setSource = (patch: Partial<ReliefSource>) =>
-    setP((s) => ({ ...s, cmd_source: { ...s.cmd_source, ...patch } }))
+  // Источник уклонов — только те успешные сессии «Рельефа», где была отмечена
+  // «Карта уклонов»: без неё растра уклонов в результатах сессии нет.
+  const slopeJobs = projectId
+    ? jobs.filter(
+        (j) =>
+          j.project_id === projectId &&
+          j.type === 'relief' &&
+          j.status === 'success' &&
+          (j.params as ReliefParams).derivatives?.slopes,
+      )
+    : []
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -68,51 +77,44 @@ export default function Water() {
         </div>
       )}
 
-      {/* Шапка модуля: СК, сглаживание, разрешение + переключатель источника ЦМД */}
+      {/* Шапка модуля: СК, разрешение + источники ЦМД и уклонов */}
       <ModuleHeader
         projectId={projectId ?? ''}
-        smoothingPreset={p.smoothing_preset}
         resolutionPreset={p.output_resolution_preset}
-        onSmoothingChange={(v: SmoothingPreset) => set('smoothing_preset', v)}
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
       >
-        <div className="rounded-lg border border-slate-200 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМД</div>
-          <div className="space-y-2">
-            <Radio
-              checked={p.cmd_source.kind === 'system'}
-              onChange={() => setSource({ kind: 'system', upload_path: undefined })}
-              label="Рассчитанная в системе"
-            />
-            {p.cmd_source.kind === 'system' && (
-              <Select
-                value={p.cmd_source.system_session_id ?? ''}
-                onChange={(e) => set('cmd_source', { ...p.cmd_source, system_session_id: e.target.value || undefined })}
-              >
-                <option value="">— выбрать сессию —</option>
-                {forestJobs.map((j) => (
-                  <option key={j.id} value={j.session_id ?? j.id}>
-                    {j.session_id ?? j.id}
-                  </option>
-                ))}
-              </Select>
-            )}
-            <Radio
-              checked={p.cmd_source.kind === 'upload'}
-              onChange={() => setSource({ kind: 'upload', system_session_id: undefined })}
-              label="Загрузить .geotiff"
-            />
-            {p.cmd_source.kind === 'upload' && (
-              <Input
-                type="file"
-                accept=".tif,.tiff,.geotiff"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (f && /\.(tiff?|geotiff)$/i.test(f.name)) {
-                    setSource({ upload_path: f.name })
-                  }
-                }}
-              />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМД</div>
+            <Select
+              value={p.cmd_source.system_session_id ?? ''}
+              onChange={(e) => set('cmd_source', { ...p.cmd_source, system_session_id: e.target.value || undefined })}
+            >
+              <option value="">— выбрать сессию —</option>
+              {forestJobs.map((j) => (
+                <option key={j.id} value={j.session_id ?? j.id}>
+                  {j.session_id ?? j.id}
+                </option>
+              ))}
+            </Select>
+            {forestJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Древостоя»</p>}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Уклоны</div>
+            <Select
+              value={p.slopes_source.system_session_id ?? ''}
+              onChange={(e) => set('slopes_source', { ...p.slopes_source, system_session_id: e.target.value || undefined })}
+            >
+              <option value="">— выбрать сессию —</option>
+              {slopeJobs.map((j) => (
+                <option key={j.id} value={j.session_id ?? j.id}>
+                  {j.session_id ?? j.id}
+                </option>
+              ))}
+            </Select>
+            {slopeJobs.length === 0 && (
+              <p className="hint-base mt-1.5">Нет сессий «Рельефа» с рассчитанной картой уклонов</p>
             )}
           </div>
         </div>
@@ -124,11 +126,11 @@ export default function Water() {
           <Accordion title="Сегментация поверхностных вод">
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Field label="Порог" tooltip="Порог бинаризации маски вероятности. Значения выше порога → вода, ниже → не вода. По умолчанию 0.6.">
-                  <NumberInput value={p.segment.threshold} step={0.05} min={0} max={1} onChange={(v) => set('segment', { ...p.segment, threshold: v })} />
-                </Field>
-                <Field label="Сглаживание">
-                  <NumberInput value={p.segment.smooth} step={0.1} onChange={(v) => set('segment', { ...p.segment, smooth: v })} />
+                <Field
+                  label="Порог уверенности модели"
+                  tooltip="Порог бинаризации маски вероятности. Значения выше порога → вода, ниже → не вода. Допустимые значения от 0.01 до 1 с шагом 0.01, по умолчанию 0.7."
+                >
+                  <NumberInput value={p.segment.threshold} step={0.01} min={0.01} max={1} onChange={(v) => set('segment', { ...p.segment, threshold: v })} />
                 </Field>
               </div>
             </div>

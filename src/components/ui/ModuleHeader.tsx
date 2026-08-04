@@ -14,9 +14,10 @@ import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 
 interface ModuleHeaderProps {
   projectId: string
-  smoothingPreset: SmoothingPreset
+  /** Сглаживание показывается, только если модуль передал пресет и обработчик (в «Воде» параметра нет). */
+  smoothingPreset?: SmoothingPreset
   resolutionPreset: ResolutionPreset
-  onSmoothingChange: (v: SmoothingPreset) => void
+  onSmoothingChange?: (v: SmoothingPreset) => void
   onResolutionChange: (v: ResolutionPreset) => void
   methodTooltips?: ReactNode
   children?: ReactNode
@@ -64,6 +65,7 @@ export function ModuleHeader({
             <div className="mb-1.5 flex items-center gap-1">
               <Globe className="h-3.5 w-3.5 text-slate-400" />
               <span className="label-base">Система координат</span>
+              <InfoHint text="Система координат наследуется из входящих файлов" />
             </div>
             <div
               className={cn(
@@ -76,15 +78,17 @@ export function ModuleHeader({
           </div>
 
           {/* Сглаживание */}
-          <Field label="Сглаживание" tooltip={METHOD_TOOLTIPS.smoothing} className="w-40">
-            <Select value={smoothingPreset} onChange={(e) => onSmoothingChange(e.target.value as SmoothingPreset)}>
-              {SMOOTHING_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          {smoothingPreset && onSmoothingChange && (
+            <Field label="Сглаживание" tooltip={METHOD_TOOLTIPS.smoothing} className="w-40">
+              <Select value={smoothingPreset} onChange={(e) => onSmoothingChange(e.target.value as SmoothingPreset)}>
+                {SMOOTHING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
 
           {/* Разрешение выходного файла */}
           <Field label="Разрешение выходного файла" tooltip={METHOD_TOOLTIPS.resolution} className="w-44">

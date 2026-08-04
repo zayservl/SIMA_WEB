@@ -48,10 +48,10 @@ export const defaultForestParams: ForestParams = {
 }
 
 export const defaultWaterParams: WaterParams = {
-  segment: { threshold: 0.6, smooth: 1 },
-  smoothing_preset: 'medium',
+  segment: { threshold: 0.7 },
   output_resolution_preset: 'native',
   cmd_source: { kind: 'system' },
+  slopes_source: { kind: 'system' },
 }
 
 interface ProjectStore {

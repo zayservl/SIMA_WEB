@@ -104,13 +104,6 @@ function aggregate(tiles: InputTile[]): MaterialAssessment {
   }
 }
 
-const DSM_EXTENSIONS = ['.tif', '.tiff', '.geotiff']
-
-function hasDsmExtension(path: string): boolean {
-  const lower = path.trim().toLowerCase()
-  return DSM_EXTENSIONS.some((ext) => lower.endsWith(ext))
-}
-
 export default function Upload() {
   const { projectId } = useParams()
   const setAssessment = useProjectStore((s) => s.setAssessment)
@@ -120,11 +113,9 @@ export default function Upload() {
 
   const [afsDir, setAfsDir] = useState(project?.scene.afs_dir || '')
   const [vlsDir, setVlsDir] = useState(project?.scene.vls_dir || '')
-  const [dsmDir, setDsmDir] = useState('')
   const [tiles, setTiles] = useState<InputTile[]>([])
   const [assessed, setAssessed] = useState(false)
   const [detectedCrs, setDetectedCrs] = useState<string | null>(null)
-  const [dsmWarning, setDsmWarning] = useState(false)
 
   const reproject = project?.scene.reproject ?? true
   const targetCrs = project?.scene.target_crs || TARGET_CRS
@@ -148,12 +139,6 @@ export default function Upload() {
     }
 
     setAssessed(true)
-  }
-
-  const onDsmChange = (value: string) => {
-    setDsmDir(value)
-    setAssessed(false)
-    setDsmWarning(value.trim().length > 0 && !hasDsmExtension(value))
   }
 
   const statuses = tiles.map((t) => pairStatus(t, reproject))
@@ -200,23 +185,7 @@ export default function Upload() {
                 />
               </div>
             </Field>
-            <Field label="ЦМР (GeoTIFF/BigTIFF) — опционально">
-              <div className="flex gap-2">
-                <FolderOpen className="mt-2 h-4 w-4 shrink-0 text-slate-400" />
-                <Input
-                  value={dsmDir}
-                  onChange={(e) => onDsmChange(e.target.value)}
-                  placeholder="/data/dsm или путь к файлу .tif"
-                />
-              </div>
-              {dsmWarning && (
-                <div className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-600">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  Ожидается файл с расширением .tif, .tiff или .geotiff
-                </div>
-              )}
-            </Field>
-            <Button onClick={handleAssess} disabled={!afsDir && !vlsDir && !dsmDir}>
+            <Button onClick={handleAssess} disabled={!afsDir && !vlsDir}>
               Оценить материалы
             </Button>
           </div>
