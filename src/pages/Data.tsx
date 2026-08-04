@@ -81,14 +81,21 @@ const PARAM_LABELS: Record<string, string> = {
   rows: 'Строки',
   category: 'Категория',
   density: 'Плотность',
-  dsm_source: 'Источник DSM',
+  dsm_source: 'Источник ЦММ',
   derivatives_source: 'Источник производных',
   segment: 'Сегментация',
-  cmd_source: 'Источник CMD',
+  dem_source: 'Источник ЦМР',
   slopes_source: 'Источник уклонов',
+  mode: 'Определение параметров',
   kind: 'Тип',
   system_session_id: 'ID системной сессии',
   upload_path: 'Путь загрузки',
+}
+
+// Значения-перечисления в человекочитаемом виде.
+const PARAM_VALUE_LABELS: Record<string, string> = {
+  ai: 'ИИ',
+  algorithmic: 'алгоритмически',
 }
 
 type ParamValue = string | number | boolean | null | undefined | ParamValue[] | { [key: string]: ParamValue }
@@ -115,7 +122,7 @@ function renderParamsValue(value: ParamValue, depth = 0): React.ReactNode {
       </div>
     )
   }
-  return <span className="text-slate-700">{String(value)}</span>
+  return <span className="text-slate-700">{PARAM_VALUE_LABELS[String(value)] ?? String(value)}</span>
 }
 
 const typeLabel: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }

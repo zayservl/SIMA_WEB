@@ -202,16 +202,21 @@ export interface ReliefParams {
 
 // ---- Параметры: Лес/Древостой (#11,12,13,16) -----------------------------
 
+// Способ определения параметров блока: моделью (ИИ) или явными правилами.
+// В режиме 'ai' ручные пороги блока не задаются — их подбирает модель.
+export type ParamMode = 'ai' | 'algorithmic'
+
 export interface ForestParams {
   cmd: {
     enabled: boolean
+    mode: ParamMode
     threshold_surface: number
     threshold_shrub: number
     channels: { chm: boolean }
     median_window: number
   }
   detection: {
-    method: 'yolov5' | 'watershed'
+    mode: ParamMode
     vegetation_state: 'active' | 'absent'
   }
   stats: {
@@ -234,11 +239,14 @@ export interface ForestParams {
   }
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /** Цифровая модель местности (ЦММ) из сессии «Рельефа». */
   dsm_source: ReliefSource
   derivatives_source: ReliefSource
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
+// Первый этап: сегментация воды по АФС проекта; далее уточнение по ЦМР
+// (не по ЦМД — «Древостой» в цепочке «Воды» не участвует).
 
 export interface WaterParams {
   segment: {
@@ -246,7 +254,8 @@ export interface WaterParams {
     threshold: number
   }
   output_resolution_preset: ResolutionPreset
-  cmd_source: ReliefSource
+  /** Цифровая модель рельефа (ЦМР) из сессии «Рельефа». */
+  dem_source: ReliefSource
   /** Сессия «Рельефа» с рассчитанной картой уклонов. */
   slopes_source: ReliefSource
 }

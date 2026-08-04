@@ -24,8 +24,8 @@ export const defaultReliefParams: ReliefParams = {
 }
 
 export const defaultForestParams: ForestParams = {
-  cmd: { enabled: true, threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
-  detection: { method: 'yolov5', vegetation_state: 'active' },
+  cmd: { enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
+  detection: { mode: 'ai', vegetation_state: 'active' },
   stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'] },
   logging_category: {
     enabled: true,
@@ -50,7 +50,7 @@ export const defaultForestParams: ForestParams = {
 export const defaultWaterParams: WaterParams = {
   segment: { threshold: 0.7 },
   output_resolution_preset: 'native',
-  cmd_source: { kind: 'system' },
+  dem_source: { kind: 'system' },
   slopes_source: { kind: 'system' },
 }
 
@@ -65,6 +65,7 @@ interface ProjectStore {
   addJob: (job: Job) => void
   updateJob: (jobId: string, patch: Partial<Job>) => void
   recomputeJob: (jobId: string, tileIds: string[] | undefined, newParams: ReliefParams | ForestParams | WaterParams) => void
+  cancelJob: (jobId: string) => void
   stopTile: (jobId: string, tileId: string) => void
   removeProject: (id: string) => void
 }
@@ -183,6 +184,42 @@ export const useProjectStore = create<ProjectStore>()(
           }
           return { jobs: [newJob, ...s.jobs] }
         }),
+      // Отмена расчёта. Уже посчитанные результаты сессии удаляются: сбрасываем
+      // выходные каталоги и файлы у задачи и всех тайлов, счётчик готовых — в 0.
+      // Тайлы, не успевшие упасть, помечаются пропущенными; упавшие сохраняют
+      // причину сбоя — она нужна для разбора.
+      cancelJob: (jobId) =>
+        set((s) => ({
+          jobs: s.jobs.map((j) => {
+            if (j.id !== jobId || j.status === 'success' || j.status === 'cancelled') return j
+            const ts = new Date().toISOString()
+            const tiles = j.tiles.map((t) =>
+              t.status === 'failed'
+                ? { ...t, output_dir: undefined, output_files: undefined }
+                : {
+                    ...t,
+                    status: 'skipped' as const,
+                    current_step: undefined,
+                    finished_at: t.finished_at ?? ts,
+                    output_dir: undefined,
+                    output_files: undefined,
+                    steps: t.steps.map((st) =>
+                      st.status === 'running' || st.status === 'pending'
+                        ? { ...st, status: 'skipped' as const, finished_at: st.finished_at ?? ts }
+                        : st,
+                    ),
+                  },
+            )
+            const agg = recompute(tiles)
+            return {
+              ...j, tiles, ...agg,
+              status: 'cancelled' as const,
+              progress: 0,
+              finished_at: ts,
+              output_dir: undefined,
+            }
+          }),
+        })),
       stopTile: (jobId, tileId) =>
         set((s) => ({
           jobs: s.jobs.map((j) => {
