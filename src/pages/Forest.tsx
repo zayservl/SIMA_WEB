@@ -8,8 +8,30 @@ import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefSource, SmoothingPreset, ResolutionPreset } from '@/api/types'
+import type { ForestParams, Job, ReliefParams, ReliefSource, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
+
+// Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
+// блока не задаются — их подбирает модель, поля гасятся вызывающим кодом.
+// «Категория рубки» переключателя не имеет: она считается только алгоритмически.
+function ParamModeSwitch({ mode, onChange, aiLabel = 'ИИ', algorithmicLabel = 'Алгоритмически', aiHint }: {
+  mode: ParamMode
+  onChange: (v: ParamMode) => void
+  aiLabel?: string
+  algorithmicLabel?: string
+  aiHint?: string
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <span className="label-base">Определение параметров</span>
+        <Radio checked={mode === 'ai'} onChange={() => onChange('ai')} label={aiLabel} />
+        <Radio checked={mode === 'algorithmic'} onChange={() => onChange('algorithmic')} label={algorithmicLabel} />
+      </div>
+      {mode === 'ai' && aiHint && <p className="hint-base mt-1">{aiHint}</p>}
+    </div>
+  )
+}
 
 export default function Forest() {
   const { projectId } = useParams()
@@ -42,10 +64,14 @@ export default function Forest() {
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
-  // Завершённые задачи рельефа в рамках текущего проекта — источник ЦМР/производных.
+  // Завершённые задачи рельефа в рамках текущего проекта — источник производных.
   const reliefJobs = projectId
     ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
     : []
+
+  // Источник ЦММ — только сессии, где ЦММ действительно строилась: сервис
+  // рельефа выполняет шаг ЦММ лишь при dsm.enabled, иначе растра в сессии нет.
+  const dsmJobs = reliefJobs.filter((j) => (j.params as ReliefParams).dsm?.enabled)
 
   const setSource = (key: 'dsm_source' | 'derivatives_source', patch: Partial<ReliefSource>) =>
     setP((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
@@ -79,21 +105,23 @@ export default function Forest() {
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* Источник ЦМР — только рассчитанная в системе сессия «Рельефа» */}
+          {/* Источник ЦММ — только рассчитанная в системе сессия «Рельефа» */}
           <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦММ</div>
             <Select
               value={p.dsm_source.system_session_id ?? ''}
               onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
             >
               <option value="">— выбрать сессию —</option>
-              {reliefJobs.map((j) => (
+              {dsmJobs.map((j) => (
                 <option key={j.id} value={j.session_id ?? j.id}>
                   {j.session_id ?? j.id}
                 </option>
               ))}
             </Select>
-            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
+            {dsmJobs.length === 0 && (
+              <p className="hint-base mt-1.5">Нет сессий «Рельефа» с построенной ЦММ</p>
+            )}
           </div>
 
           {/* Источник производных рельефа */}
@@ -122,16 +150,23 @@ export default function Forest() {
             <div className="space-y-4">
               <Checkbox checked={p.cmd.enabled} onChange={(v) => set('cmd', { ...p.cmd, enabled: v })} label="Формировать ЦМД" />
               <div className={`space-y-4 ${p.cmd.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <Field label="Поверхность (м)" tooltip="Высота точек, относимая к поверхности (класс 3). Точки ниже этого порога считаются поверхностью земли.">
-                    <NumberInput value={p.cmd.threshold_surface} step={0.1} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_surface: v })} />
-                  </Field>
-                  <Field label="Кустарники (м)" tooltip="Верхняя граница кустарникового яруса (класс 4). Выше — древесный ярус (класс 5).">
-                    <NumberInput value={p.cmd.threshold_shrub} step={0.5} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_shrub: v })} />
-                  </Field>
-                  <Field label="Медианный фильтр">
-                    <NumberInput value={p.cmd.median_window} min={0} onChange={(v) => set('cmd', { ...p.cmd, median_window: v })} />
-                  </Field>
+                <ParamModeSwitch
+                  mode={p.cmd.mode}
+                  onChange={(mode) => set('cmd', { ...p.cmd, mode })}
+                  aiHint="Пороги ярусов и окно фильтра подбирает модель"
+                />
+                <div className={`space-y-4 ${p.cmd.mode === 'algorithmic' ? '' : 'opacity-40 pointer-events-none'}`}>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <Field label="Поверхность (м)" tooltip="Высота точек, относимая к поверхности (класс 3). Точки ниже этого порога считаются поверхностью земли.">
+                      <NumberInput value={p.cmd.threshold_surface} step={0.1} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_surface: v })} />
+                    </Field>
+                    <Field label="Кустарники (м)" tooltip="Верхняя граница кустарникового яруса (класс 4). Выше — древесный ярус (класс 5).">
+                      <NumberInput value={p.cmd.threshold_shrub} step={0.5} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_shrub: v })} />
+                    </Field>
+                    <Field label="Медианный фильтр">
+                      <NumberInput value={p.cmd.median_window} min={0} onChange={(v) => set('cmd', { ...p.cmd, median_window: v })} />
+                    </Field>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-4">
                   <Checkbox checked={p.cmd.channels.chm} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, chm: v } })} label="CHM (высота крон)" />
@@ -147,10 +182,13 @@ export default function Forest() {
         <CardPad>
           <Accordion title="Детекция крон">
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-5">
-                <Radio checked={p.detection.method === 'yolov5'} onChange={() => set('detection', { ...p.detection, method: 'yolov5' })} label="Нейросеть" />
-                <Radio checked={p.detection.method === 'watershed'} onChange={() => set('detection', { ...p.detection, method: 'watershed' })} label="Водораздел" />
-              </div>
+              <ParamModeSwitch
+                mode={p.detection.mode}
+                onChange={(mode) => set('detection', { ...p.detection, mode })}
+                aiLabel="ИИ (нейросеть YOLOv5)"
+                algorithmicLabel="Алгоритмически (водораздел)"
+                aiHint="Границы сегментов крон определяет модель"
+              />
               <Field label="Состояние вегетации">
                 <Select
                   value={p.detection.vegetation_state}
@@ -160,9 +198,11 @@ export default function Forest() {
                   <option value="absent">Отсутствует</option>
                 </Select>
               </Field>
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
-              </div>
+              {p.detection.mode === 'ai' && (
+                <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
+                  Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
+                </div>
+              )}
             </div>
           </Accordion>
         </CardPad>

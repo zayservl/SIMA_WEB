@@ -174,6 +174,19 @@ export interface ReliefParams {
   }
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /**
+   * ЦММ (цифровая модель местности, DSM) — второй основной выход «Рельефа»
+   * наряду с ЦМР. Поля 1:1 к sima_relief_service.contract.DsmParams: сервис
+   * строит ЦММ только при enabled=true (шаг 3b). ЦММ — вход модуля «Древостой».
+   */
+  dsm: {
+    enabled: boolean
+    output_type: 'max' | 'mean' | 'idw'
+    interpolate: boolean
+    fill_holes: boolean
+    max_search_distance: number
+    edge_extrapolation_m: number
+  }
   derivatives: {
     slopes: boolean
     slopes_res: number
@@ -202,16 +215,21 @@ export interface ReliefParams {
 
 // ---- Параметры: Лес/Древостой (#11,12,13,16) -----------------------------
 
+// Способ определения параметров блока: моделью (ИИ) или явными правилами.
+// В режиме 'ai' ручные пороги блока не задаются — их подбирает модель.
+export type ParamMode = 'ai' | 'algorithmic'
+
 export interface ForestParams {
   cmd: {
     enabled: boolean
+    mode: ParamMode
     threshold_surface: number
     threshold_shrub: number
     channels: { chm: boolean }
     median_window: number
   }
   detection: {
-    method: 'yolov5' | 'watershed'
+    mode: ParamMode
     vegetation_state: 'active' | 'absent'
   }
   stats: {
@@ -234,11 +252,14 @@ export interface ForestParams {
   }
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /** Цифровая модель местности (ЦММ) из сессии «Рельефа». */
   dsm_source: ReliefSource
   derivatives_source: ReliefSource
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
+// Первый этап: сегментация воды по АФС проекта; далее уточнение по ЦМР
+// (не по ЦМД — «Древостой» в цепочке «Воды» не участвует).
 
 export interface WaterParams {
   segment: {
@@ -246,7 +267,8 @@ export interface WaterParams {
     threshold: number
   }
   output_resolution_preset: ResolutionPreset
-  cmd_source: ReliefSource
+  /** Цифровая модель рельефа (ЦМР) из сессии «Рельефа». */
+  dem_source: ReliefSource
   /** Сессия «Рельефа» с рассчитанной картой уклонов. */
   slopes_source: ReliefSource
 }

@@ -35,14 +35,14 @@ export default function Water() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'water', { cmd_source: p.cmd_source })
+  const deps = checkDependencies(projectId || '', 'water', { dem_source: p.dem_source })
   const runTooltip = deps.ok
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
-  // Завершённые задачи леса в рамках текущего проекта — источник ЦМД.
-  const forestJobs = projectId
-    ? jobs.filter((j) => j.project_id === projectId && j.type === 'forest' && j.status === 'success')
+  // Завершённые сессии «Рельефа» — источник ЦМР для уточнения маски воды.
+  const reliefJobs = projectId
+    ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
     : []
 
   // Источник уклонов — только те успешные сессии «Рельефа», где была отмечена
@@ -77,27 +77,31 @@ export default function Water() {
         </div>
       )}
 
-      {/* Шапка модуля: СК, разрешение + источники ЦМД и уклонов */}
+      {/* Шапка модуля: СК, разрешение + источники ЦМР и уклонов */}
       <ModuleHeader
         projectId={projectId ?? ''}
         resolutionPreset={p.output_resolution_preset}
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
       >
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs text-slate-500">
+          Первый этап — выделение воды по АФС проекта (каталог из «Загрузки данных»); ЦМР и уклоны используются
+          для уточнения маски.
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМД</div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
             <Select
-              value={p.cmd_source.system_session_id ?? ''}
-              onChange={(e) => set('cmd_source', { ...p.cmd_source, system_session_id: e.target.value || undefined })}
+              value={p.dem_source.system_session_id ?? ''}
+              onChange={(e) => set('dem_source', { ...p.dem_source, system_session_id: e.target.value || undefined })}
             >
               <option value="">— выбрать сессию —</option>
-              {forestJobs.map((j) => (
+              {reliefJobs.map((j) => (
                 <option key={j.id} value={j.session_id ?? j.id}>
                   {j.session_id ?? j.id}
                 </option>
               ))}
             </Select>
-            {forestJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Древостоя»</p>}
+            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
           </div>
 
           <div className="rounded-lg border border-slate-200 p-3">

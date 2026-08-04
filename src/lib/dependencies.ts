@@ -11,13 +11,13 @@ export interface DependencyCheck {
   missing: { layer: string; tab: string }[]
 }
 
-// Источники, которые могут закрывать зависимость модуля от предыдущего расчёта
-// (Forest: ЦМР/производные рельефа; Water: ЦМД) — либо выбором в системе, либо
-// загрузкой пользовательского .geotiff, минуя предыдущий модуль целиком.
+// Источники, которые могут закрывать зависимость модуля от предыдущего расчёта:
+// Forest — ЦММ и производные рельефа, Water — ЦМР. Оба берутся из завершённых
+// сессий «Рельефа», поэтому оба модуля зависят от него, а не друг от друга.
 export interface DependencySources {
   dsm_source?: ReliefSource
   derivatives_source?: ReliefSource
-  cmd_source?: ReliefSource
+  dem_source?: ReliefSource
 }
 
 // Проверка, что у проекта загружены исходные материалы (АФС + ВЛС).
@@ -56,15 +56,16 @@ export function checkDependencies(projectId: string, module: JobType, sources?: 
       hasSuccessfulJob(projectId, 'relief') ||
       (sourceSatisfied(sources?.dsm_source) && sourceSatisfied(sources?.derivatives_source))
     if (!reliefOk) {
-      missing.push({ layer: 'ЦМР (Рельеф)', tab: 'Рельеф' })
+      missing.push({ layer: 'ЦММ (Рельеф)', tab: 'Рельеф' })
     }
   } else if (module === 'water') {
+    // Вода считается по АФС и ЦМР: «Древостой» в цепочке не участвует.
     if (!hasAssessment(projectId)) {
       missing.push({ layer: 'АФС + ВЛС', tab: 'Загрузка данных' })
     }
-    const forestOk = hasSuccessfulJob(projectId, 'forest') || sourceSatisfied(sources?.cmd_source)
-    if (!forestOk) {
-      missing.push({ layer: 'ЦМД (Древостой)', tab: 'Древостой' })
+    const reliefOk = hasSuccessfulJob(projectId, 'relief') || sourceSatisfied(sources?.dem_source)
+    if (!reliefOk) {
+      missing.push({ layer: 'ЦМР (Рельеф)', tab: 'Рельеф' })
     }
   }
 

@@ -9,7 +9,7 @@ import { artifactsFor, tileDir } from '@/lib/outputs'
 import type { Job, JobType, Tile, TileStatus, StepStatus } from '@/api/types'
 import {
   CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Circle,
-  Search, SkipForward, Square, SlidersHorizontal,
+  Search, SkipForward, Square, SlidersHorizontal, Ban, AlertTriangle,
 } from 'lucide-react'
 
 const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
@@ -218,7 +218,10 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
   const [openTileId, setOpenTileId] = useState<string | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
   const stopTile = useProjectStore((s) => s.stopTile)
+  const cancelJob = useProjectStore((s) => s.cancelJob)
+  const cancellable = job.status === 'queued' || job.status === 'running'
 
   const icon = job.status === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
     : job.status === 'success' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -275,6 +278,11 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
               {job.tiles_skipped > 0 && <div className="text-slate-400">{job.tiles_skipped} пропущено</div>}
             </div>
             <div className="flex items-center gap-2">
+              {cancellable && (
+                <Button variant="outline" size="sm" onClick={() => setConfirmCancel(true)} title="Отменить расчёт: посчитанные результаты сессии будут удалены">
+                  <Ban className="h-3 w-3" /> Отменить расчёт
+                </Button>
+              )}
               {job.tiles_failed > 0 && (
                 <Button variant="outline" size="sm" onClick={onRecomputeFailed} title="Пересчитать упавшие тайлы с новыми параметрами (новая сессия)">
                   <SlidersHorizontal className="h-3 w-3" /> Пересчитать упавшие
@@ -286,6 +294,32 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
             </div>
           </div>
         </div>
+
+        {/* Подтверждение отмены: действие необратимо — уже посчитанные тайлы теряются */}
+        {confirmCancel && cancellable && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              Отменить расчёт? Результаты сессии {job.session_id}, посчитанные к этому моменту
+              ({job.tiles_done} из {job.tiles_total} тайлов), будут удалены.
+            </span>
+            <div className="ml-auto flex gap-2">
+              <Button variant="danger" size="sm" onClick={() => { cancelJob(job.id); setConfirmCancel(false) }}>
+                <Ban className="h-3 w-3" /> Отменить и удалить
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setConfirmCancel(false)}>
+                Продолжить расчёт
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {job.status === 'cancelled' && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-slate-100 p-3 text-xs text-slate-600">
+            <Ban className="h-4 w-4 shrink-0" />
+            Расчёт отменён, посчитанные результаты удалены. Запустите заново через «Пересчитать с новыми параметрами».
+          </div>
+        )}
 
         {/* Прогресс-бар */}
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
