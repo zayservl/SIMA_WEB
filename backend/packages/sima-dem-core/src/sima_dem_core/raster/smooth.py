@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import rasterio
 import numpy as np
-from scipy.ndimage import gaussian_filter, binary_fill_holes
+from scipy.ndimage import gaussian_filter
 from rasterio.fill import fillnodata
+
+from .holes import fillable_mask
 
 
 def gauss_smooth(
@@ -21,6 +23,7 @@ def gauss_smooth(
     window_size: int,
     fill_holes: bool = False,
     max_search_distance: int = 100,
+    max_extrapolation_px: float = 0.0,
 ) -> None:
     with rasterio.open(raster) as src:
         profile = src.profile
@@ -31,7 +34,7 @@ def gauss_smooth(
     valid_mask = mask == 255
 
     if fill_holes and nodata is not None:
-        holes = _find_internal_holes(valid_mask)
+        holes = fillable_mask(valid_mask, max_extrapolation_px)
         if np.any(holes):
             filled = fillnodata(
                 array.copy(), mask=mask,
@@ -52,8 +55,3 @@ def gauss_smooth(
 
     with rasterio.open(smoothed, "w", **profile) as dest:
         dest.write_band(1, smoothed_array.astype(profile.get("dtype", "float32")))
-
-
-def _find_internal_holes(valid_mask: np.ndarray) -> np.ndarray:
-    filled = binary_fill_holes(valid_mask)
-    return filled & ~valid_mask

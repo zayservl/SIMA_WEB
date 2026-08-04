@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -160,12 +161,68 @@ export function InfoHint({ text }: { text: string }) {
   )
 }
 
-// Тултип-обёртка
+// Тултип. Всплывающее окно выносится порталом в body и позиционируется
+// фиксированно: иначе его режут родители с overflow (аккордеон, таблицы,
+// скролл-область main) — тёмный фон обрезается, а текст выходит за него.
+// Положение: над триггером, при нехватке места сверху — под ним; по горизонтали
+// прижимается к краям окна с отступом 8 px.
 export function Tooltip({ content, children }: { content: string; children: React.ReactNode }) {
+  const triggerRef = useRef<HTMLSpanElement>(null)
+  const tipRef = useRef<HTMLSpanElement>(null)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect()
+      const tip = tipRef.current?.getBoundingClientRect()
+      if (!trigger || !tip) return
+      const margin = 8
+      const gap = 6
+      const fitsAbove = trigger.top - tip.height - gap >= margin
+      const top = fitsAbove ? trigger.top - tip.height - gap : trigger.bottom + gap
+      const centered = trigger.left + trigger.width / 2 - tip.width / 2
+      const left = Math.min(Math.max(margin, centered), window.innerWidth - tip.width - margin)
+      setPos({ top, left })
+    }
+    place()
+    // Скролл в любом контейнере и ресайз сдвигают триггер — пересчитываем.
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open, content])
+
+  const close = () => { setOpen(false); setPos(null) }
+
   return (
-    <span className="tooltip-wrap">
-      {children}
-      <span className="tooltip">{content}</span>
-    </span>
+    <>
+      <span
+        ref={triggerRef}
+        className="tooltip-wrap"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={close}
+        onFocus={() => setOpen(true)}
+        onBlur={close}
+      >
+        {children}
+      </span>
+      {open &&
+        createPortal(
+          <span
+            ref={tipRef}
+            role="tooltip"
+            className="tooltip"
+            // До первого замера держим скрытым: иначе виден кадр в углу экрана.
+            style={{ transform: `translate(${pos?.left ?? 0}px, ${pos?.top ?? 0}px)`, visibility: pos ? 'visible' : 'hidden' }}
+          >
+            {content}
+          </span>,
+          document.body,
+        )}
+    </>
   )
 }

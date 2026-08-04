@@ -15,7 +15,7 @@ export const defaultReliefParams: ReliefParams = {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
     tpi: true, tpi_radii: [270, 810, 2430],
-    interpolation: false, inter_amp: 1,
+    interpolation: false, inter_amp: 1, edge_extrapolation_m: 5,
   },
   heights: { enabled: false, source: 'las', step: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
@@ -48,10 +48,10 @@ export const defaultForestParams: ForestParams = {
 }
 
 export const defaultWaterParams: WaterParams = {
-  segment: { threshold: 0.6, smooth: 1 },
-  smoothing_preset: 'medium',
+  segment: { threshold: 0.7 },
   output_resolution_preset: 'native',
   cmd_source: { kind: 'system' },
+  slopes_source: { kind: 'system' },
 }
 
 interface ProjectStore {

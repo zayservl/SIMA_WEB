@@ -241,6 +241,13 @@ export default function Relief() {
                   </span>
                   <NumberInput value={p.derivatives.inter_amp} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, inter_amp: v })} disabled={!p.derivatives.interpolation} className="w-28" />
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="text-sm">Экстраполяция края, м</span>
+                    <InfoHint text="На сколько метров допустимо продлить ЦМР за границу валидной области. 0 — заполнять только внутренние дыры: тогда все пустоты, касающиеся рамки растра, остаются незаполненными." />
+                  </span>
+                  <NumberInput value={p.derivatives.edge_extrapolation_m} step={1} onChange={(v) => set('derivatives', { ...p.derivatives, edge_extrapolation_m: v })} disabled={!p.derivatives.interpolation} className="w-28" />
+                </div>
               </div>
             </Accordion>
           </CardPad>

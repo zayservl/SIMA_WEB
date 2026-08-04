@@ -183,6 +183,8 @@ export interface ReliefParams {
     tpi_radii: number[]
     interpolation: boolean
     inter_amp: number
+    /** Допустимая экстраполяция ЦМР за границу валидной области, м (0 — только внутренние дыры). */
+    edge_extrapolation_m: number
   }
   heights: {
     enabled: boolean
@@ -240,12 +242,13 @@ export interface ForestParams {
 
 export interface WaterParams {
   segment: {
+    /** Порог уверенности модели: 0.01…1 с шагом 0.01. */
     threshold: number
-    smooth: number
   }
-  smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
   cmd_source: ReliefSource
+  /** Сессия «Рельефа» с рассчитанной картой уклонов. */
+  slopes_source: ReliefSource
 }
 
 // ---- Выходные артефакты (Блок Г) -----------------------------------------
