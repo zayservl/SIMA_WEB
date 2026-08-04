@@ -11,6 +11,9 @@ export const defaultReliefParams: ReliefParams = {
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   smoothing_preset: 'medium',
   output_resolution_preset: 'native',
+  // ЦММ по умолчанию включена: без неё «Древостою» нечего выбрать в источнике.
+  // В бэкенд-контракте dataclass-дефолт enabled=False — здесь демо-сценарий.
+  dsm: { enabled: true, output_type: 'max', interpolate: true, fill_holes: true, max_search_distance: 100, edge_extrapolation_m: 5 },
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,

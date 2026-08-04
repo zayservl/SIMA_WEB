@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefSource, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
+import type { ForestParams, Job, ReliefParams, ReliefSource, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
@@ -64,10 +64,14 @@ export default function Forest() {
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
-  // Завершённые задачи рельефа в рамках текущего проекта — источник ЦМР/производных.
+  // Завершённые задачи рельефа в рамках текущего проекта — источник производных.
   const reliefJobs = projectId
     ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
     : []
+
+  // Источник ЦММ — только сессии, где ЦММ действительно строилась: сервис
+  // рельефа выполняет шаг ЦММ лишь при dsm.enabled, иначе растра в сессии нет.
+  const dsmJobs = reliefJobs.filter((j) => (j.params as ReliefParams).dsm?.enabled)
 
   const setSource = (key: 'dsm_source' | 'derivatives_source', patch: Partial<ReliefSource>) =>
     setP((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
@@ -109,13 +113,15 @@ export default function Forest() {
               onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
             >
               <option value="">— выбрать сессию —</option>
-              {reliefJobs.map((j) => (
+              {dsmJobs.map((j) => (
                 <option key={j.id} value={j.session_id ?? j.id}>
                   {j.session_id ?? j.id}
                 </option>
               ))}
             </Select>
-            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
+            {dsmJobs.length === 0 && (
+              <p className="hint-base mt-1.5">Нет сессий «Рельефа» с построенной ЦММ</p>
+            )}
           </div>
 
           {/* Источник производных рельефа */}

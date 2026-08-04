@@ -27,8 +27,10 @@ function artifactDefs(type: Job['type']): { name: string; kind: OutputArtifact['
   switch (type) {
     case 'relief':
       return [
+        // Имена — как у сервиса рельефа: ЦМР это *_dem.tif, ЦММ — *_dsm.tif.
+        { name: 'dem.tif', kind: 'raster', format: 'GeoTIFF', base: 8, spread: 6 },
+        { name: 'dem_smooth.tif', kind: 'raster', format: 'GeoTIFF', base: 6, spread: 4 },
         { name: 'dsm.tif', kind: 'raster', format: 'GeoTIFF', base: 8, spread: 6 },
-        { name: 'dsm_smoothed.tif', kind: 'raster', format: 'GeoTIFF', base: 6, spread: 4 },
         { name: 'slopes.tif', kind: 'raster', format: 'GeoTIFF', base: 4, spread: 3 },
         { name: 'aspect.tif', kind: 'raster', format: 'GeoTIFF', base: 4, spread: 3 },
         { name: 'tpi.tif', kind: 'raster', format: 'GeoTIFF', base: 5, spread: 3 },

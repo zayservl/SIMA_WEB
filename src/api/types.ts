@@ -174,6 +174,19 @@ export interface ReliefParams {
   }
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /**
+   * ЦММ (цифровая модель местности, DSM) — второй основной выход «Рельефа»
+   * наряду с ЦМР. Поля 1:1 к sima_relief_service.contract.DsmParams: сервис
+   * строит ЦММ только при enabled=true (шаг 3b). ЦММ — вход модуля «Древостой».
+   */
+  dsm: {
+    enabled: boolean
+    output_type: 'max' | 'mean' | 'idw'
+    interpolate: boolean
+    fill_holes: boolean
+    max_search_distance: number
+    edge_extrapolation_m: number
+  }
   derivatives: {
     slopes: boolean
     slopes_res: number

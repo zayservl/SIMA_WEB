@@ -5,7 +5,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Checkbox, Radio, NumberInput, Field, InfoHint } from '@/components/ui/controls'
+import { Checkbox, Radio, NumberInput, Field, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { Play, AlertTriangle } from 'lucide-react'
@@ -185,6 +185,63 @@ export default function Relief() {
                   </Field>
                   <Field label="order"><NumberInput value={p.smoothing.order} onChange={(v) => set('smoothing', { ...p.smoothing, order: v })} /></Field>
                   <Field label="window"><NumberInput value={p.smoothing.window} onChange={(v) => set('smoothing', { ...p.smoothing, window: v })} /></Field>
+                </div>
+              </div>
+            </Accordion>
+          </CardPad>
+        </Card>
+
+        {/* ЦММ — второй основной выход модуля, вход «Древостоя» */}
+        <Card>
+          <CardPad>
+            <Accordion title="Цифровая модель местности" badge="ЦММ">
+              <div className="space-y-3">
+                <Checkbox
+                  checked={p.dsm.enabled}
+                  onChange={(v) => set('dsm', { ...p.dsm, enabled: v })}
+                  label="Строить ЦММ"
+                />
+                <p className="hint-base">
+                  ЦММ (поверхность вместе с объектами) — вход модуля «Древостой». Без неё сессия не появится
+                  в списке источников ЦММ.
+                </p>
+                <div className={`space-y-3 ${p.dsm.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Агрегация точек" tooltip="Как высота точек сводится в пиксель растра: max — верхняя точка (легаси CMD.py), mean — среднее, idw — обратно взвешенное расстояние.">
+                      <Select
+                        value={p.dsm.output_type}
+                        onChange={(e) => set('dsm', { ...p.dsm, output_type: e.target.value as ReliefParams['dsm']['output_type'] })}
+                      >
+                        <option value="max">max (верхняя точка)</option>
+                        <option value="mean">mean (среднее)</option>
+                        <option value="idw">idw (взвешенное)</option>
+                      </Select>
+                    </Field>
+                    <Field label="Радиус поиска, пикс" tooltip="max_search_distance — радиус заполнения пустот при интерполяции ЦММ.">
+                      <NumberInput
+                        value={p.dsm.max_search_distance}
+                        min={0}
+                        onChange={(v) => set('dsm', { ...p.dsm, max_search_distance: v })}
+                      />
+                    </Field>
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    <Checkbox checked={p.dsm.interpolate} onChange={(v) => set('dsm', { ...p.dsm, interpolate: v })} label="Интерполяция" />
+                    <Checkbox checked={p.dsm.fill_holes} onChange={(v) => set('dsm', { ...p.dsm, fill_holes: v })} label="Заполнять пустоты" />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="text-sm">Экстраполяция края, м</span>
+                      <InfoHint text="На сколько метров допустимо продлить ЦММ за границу валидной области. 0 — заполнять только внутренние дыры." />
+                    </span>
+                    <NumberInput
+                      value={p.dsm.edge_extrapolation_m}
+                      step={1}
+                      min={0}
+                      onChange={(v) => set('dsm', { ...p.dsm, edge_extrapolation_m: v })}
+                      className="w-28"
+                    />
+                  </div>
                 </div>
               </div>
             </Accordion>
