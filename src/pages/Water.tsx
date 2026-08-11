@@ -4,10 +4,10 @@ import { useProjectStore, defaultWaterParams } from '@/store/projectStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { NumberInput, Field, Select } from '@/components/ui/controls'
+import { NumberInput, Field } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { WaterParams, Job, ResolutionPreset } from '@/api/types'
+import type { WaterParams, Job } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
@@ -15,10 +15,12 @@ export default function Water() {
   const navigate = useNavigate()
   const location = useLocation()
   const addJob = useProjectStore((s) => s.addJob)
-  const jobs = useProjectStore((s) => s.jobs)
-  const [p, setP] = useState<WaterParams>(() =>
-    (location.state as { retryParams?: WaterParams } | null)?.retryParams ?? defaultWaterParams
-  )
+  // Повтор старой сессии: из сохранённых параметров берём только те, что
+  // остались в контракте (ЦМР и разрешение из модуля убраны).
+  const [p, setP] = useState<WaterParams>(() => {
+    const retry = (location.state as { retryParams?: WaterParams } | null)?.retryParams
+    return { segment: { ...defaultWaterParams.segment, ...retry?.segment } }
+  })
   const set = <K extends keyof WaterParams>(k: K, v: WaterParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   const handleRun = () => {
@@ -35,15 +37,10 @@ export default function Water() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'water', { dem_source: p.dem_source })
+  const deps = checkDependencies(projectId || '', 'water')
   const runTooltip = deps.ok
     ? undefined
-    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
-
-  // Завершённые сессии «Рельефа» — источник ЦМР для уточнения маски воды.
-  const reliefJobs = projectId
-    ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
-    : []
+    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Загрузите данные на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -65,33 +62,12 @@ export default function Water() {
         </div>
       )}
 
-      {/* Шапка модуля: СК, разрешение + источник ЦМР */}
-      <ModuleHeader
-        projectId={projectId ?? ''}
-        resolutionPreset={p.output_resolution_preset}
-        onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
-      >
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦМР</div>
-            <Select
-              value={p.dem_source.system_session_id ?? ''}
-              onChange={(e) => set('dem_source', { ...p.dem_source, system_session_id: e.target.value || undefined })}
-            >
-              <option value="">— выбрать сессию —</option>
-              {reliefJobs.map((j) => (
-                <option key={j.id} value={j.session_id ?? j.id}>
-                  {j.session_id ?? j.id}
-                </option>
-              ))}
-            </Select>
-            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-500">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник АФС</div>
-            Каталог АФС проекта из «Загрузки данных» — по нему строится маска воды.
-          </div>
+      {/* Шапка модуля: СК + единственный источник — АФС */}
+      <ModuleHeader projectId={projectId ?? ''}>
+        <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-500">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник АФС</div>
+          Каталог АФС проекта из «Загрузки данных» — по нему строится маска воды. ЦМР, ЦМД и
+          производные рельефа на этом этапе не используются.
         </div>
       </ModuleHeader>
 

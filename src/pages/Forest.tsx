@@ -6,10 +6,10 @@ import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
-import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefParams, ReliefSource, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
-import { checkDependencies } from '@/lib/dependencies'
+import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
+import { checkDependencies, hasAfs } from '@/lib/dependencies'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
 // блока не задаются — их подбирает модель, поля гасятся вызывающим кодом.
@@ -33,6 +33,21 @@ function ParamModeSwitch({ mode, onChange, aiLabel = 'ИИ', algorithmicLabel = 
   )
 }
 
+// Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
+// изменения контракта, поэтому недостающие поля добираем из умолчаний.
+function withDefaults(fp?: ForestParams): ForestParams {
+  if (!fp) return defaultForestParams
+  const d = defaultForestParams
+  return {
+    ...d, ...fp,
+    cmd: { ...d.cmd, ...fp.cmd },
+    detection: { ...d.detection, ...fp.detection },
+    stats: { ...d.stats, ...fp.stats },
+    smoothing: { ...d.smoothing, ...fp.smoothing },
+    logging_category: { ...d.logging_category, ...fp.logging_category },
+  }
+}
+
 export default function Forest() {
   const { projectId } = useParams()
   const navigate = useNavigate()
@@ -41,9 +56,17 @@ export default function Forest() {
   const addJob = useProjectStore((s) => s.addJob)
   const jobs = useProjectStore((s) => s.jobs)
   const [p, setP] = useState<ForestParams>(() =>
-    (location.state as { retryParams?: ForestParams } | null)?.retryParams ?? defaultForestParams
+    withDefaults((location.state as { retryParams?: ForestParams } | null)?.retryParams)
   )
   const set = <K extends keyof ForestParams>(k: K, v: ForestParams[K]) => setP((s) => ({ ...s, [k]: v }))
+
+  // Пресет сглаживания задаёт sigma; в режиме «Пользовательское» её вводят руками.
+  const handleSmoothingPreset = (v: SmoothingPreset) =>
+    setP((s) => ({
+      ...s,
+      smoothing_preset: v,
+      smoothing: { ...s.smoothing, sigma: v === 'custom' ? s.smoothing.sigma : SIGMA_BY_PRESET[v] },
+    }))
 
   const handleRun = () => {
     if (!projectId) return
@@ -51,7 +74,13 @@ export default function Forest() {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
       project_id: projectId, type: 'forest', status: 'queued', progress: 0,
       tiles_total: 18, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
-      started_at: new Date().toISOString(), params: p,
+      started_at: new Date().toISOString(),
+      params: {
+        ...p,
+        // Без АФС детекция крон и зависящие от неё статистики не выполняются.
+        detection: { ...p.detection, enabled: detectionEnabled },
+        stats: { ...p.stats, enabled: p.stats.enabled && detectionEnabled },
+      },
     }
     addJob(job)
     navigate(`/projects/${projectId}/tasks`)
@@ -59,12 +88,12 @@ export default function Forest() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source, derivatives_source: p.derivatives_source })
+  const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source })
   const runTooltip = deps.ok
     ? undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
-  // Завершённые задачи рельефа в рамках текущего проекта — источник производных.
+  // Завершённые задачи рельефа в рамках текущего проекта.
   const reliefJobs = projectId
     ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
     : []
@@ -73,8 +102,32 @@ export default function Forest() {
   // рельефа выполняет шаг ЦММ лишь при dsm.enabled, иначе растра в сессии нет.
   const dsmJobs = reliefJobs.filter((j) => (j.params as ReliefParams).dsm?.enabled)
 
-  const setSource = (key: 'dsm_source' | 'derivatives_source', patch: Partial<ReliefSource>) =>
-    setP((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
+  // Отдельного выбора производных рельефа нет: они подставляются из той же
+  // сессии, что и ЦММ. Держим derivatives_source синхронным с dsm_source.
+  const setDsmSession = (sessionId: string | undefined) =>
+    setP((s) => ({
+      ...s,
+      dsm_source: { ...s.dsm_source, system_session_id: sessionId },
+      derivatives_source: { ...s.derivatives_source, kind: s.dsm_source.kind, system_session_id: sessionId },
+    }))
+
+  // Какие производные реально посчитаны в выбранной сессии — показываем, чтобы
+  // выбор ЦММ не тянул за собой молчаливо пустой набор производных.
+  const selectedJob = dsmJobs.find((j) => (j.session_id ?? j.id) === p.dsm_source.system_session_id)
+  const selectedDerivatives = selectedJob
+    ? (() => {
+        const d = (selectedJob.params as ReliefParams).derivatives
+        return [
+          d?.slopes && 'уклоны',
+          d?.aspect && 'экспозиции',
+          d?.tpi && 'TPI',
+        ].filter(Boolean) as string[]
+      })()
+    : null
+
+  // Детекция крон идёт по ортофотоплану: без АФС расчёт недоступен.
+  const afsAvailable = hasAfs(projectId || '')
+  const detectionEnabled = p.detection.enabled && afsAvailable
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -101,45 +154,36 @@ export default function Forest() {
         projectId={projectId ?? ''}
         smoothingPreset={p.smoothing_preset}
         resolutionPreset={p.output_resolution_preset}
-        onSmoothingChange={(v: SmoothingPreset) => set('smoothing_preset', v)}
+        onSmoothingChange={handleSmoothingPreset}
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
+        customSmoothing={p.smoothing}
+        onCustomSmoothingChange={(patch) => setP((s) => ({ ...s, smoothing: { ...s.smoothing, ...patch } }))}
       >
-        <div className="grid gap-4 sm:grid-cols-2">
-          {/* Источник ЦММ — только рассчитанная в системе сессия «Рельефа» */}
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦММ</div>
-            <Select
-              value={p.dsm_source.system_session_id ?? ''}
-              onChange={(e) => setSource('dsm_source', { system_session_id: e.target.value || undefined })}
-            >
-              <option value="">— выбрать сессию —</option>
-              {dsmJobs.map((j) => (
-                <option key={j.id} value={j.session_id ?? j.id}>
-                  {j.session_id ?? j.id}
-                </option>
-              ))}
-            </Select>
-            {dsmJobs.length === 0 && (
-              <p className="hint-base mt-1.5">Нет сессий «Рельефа» с построенной ЦММ</p>
-            )}
-          </div>
-
-          {/* Источник производных рельефа */}
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник производных рельефа</div>
-            <Select
-              value={p.derivatives_source.system_session_id ?? ''}
-              onChange={(e) => setSource('derivatives_source', { system_session_id: e.target.value || undefined })}
-            >
-              <option value="">— выбрать сессию —</option>
-              {reliefJobs.map((j) => (
-                <option key={j.id} value={j.session_id ?? j.id}>
-                  {j.session_id ?? j.id}
-                </option>
-              ))}
-            </Select>
-            {reliefJobs.length === 0 && <p className="hint-base mt-1.5">Нет завершённых сессий «Рельефа»</p>}
-          </div>
+        {/* Источник ЦММ — только рассчитанная в системе сессия «Рельефа».
+            Производные рельефа берутся из неё же, отдельного выбора нет. */}
+        <div className="rounded-lg border border-slate-200 p-3 sm:max-w-md">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Источник ЦММ</div>
+          <Select
+            value={p.dsm_source.system_session_id ?? ''}
+            onChange={(e) => setDsmSession(e.target.value || undefined)}
+          >
+            <option value="">— выбрать сессию —</option>
+            {dsmJobs.map((j) => (
+              <option key={j.id} value={j.session_id ?? j.id}>
+                {j.session_id ?? j.id}
+              </option>
+            ))}
+          </Select>
+          {dsmJobs.length === 0 ? (
+            <p className="hint-base mt-1.5">Нет сессий «Рельефа» с построенной ЦММ</p>
+          ) : selectedDerivatives ? (
+            <p className="hint-base mt-1.5">
+              Производные рельефа подставляются из этой же сессии:{' '}
+              {selectedDerivatives.length ? selectedDerivatives.join(', ') : 'в сессии не рассчитаны'}
+            </p>
+          ) : (
+            <p className="hint-base mt-1.5">Производные рельефа подставляются из выбранной сессии автоматически</p>
+          )}
         </div>
       </ModuleHeader>
 
@@ -182,27 +226,44 @@ export default function Forest() {
         <CardPad>
           <Accordion title="Детекция крон">
             <div className="space-y-4">
-              <ParamModeSwitch
-                mode={p.detection.mode}
-                onChange={(mode) => set('detection', { ...p.detection, mode })}
-                aiLabel="ИИ (нейросеть YOLOv5)"
-                algorithmicLabel="Алгоритмически (водораздел)"
-                aiHint="Границы сегментов крон определяет модель"
+              <Checkbox
+                checked={p.detection.enabled}
+                onChange={(v) => set('detection', { ...p.detection, enabled: v })}
+                label="Выполнять детекцию крон"
+                disabled={!afsAvailable}
               />
-              <Field label="Состояние вегетации">
-                <Select
-                  value={p.detection.vegetation_state}
-                  onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
-                >
-                  <option value="active">Активная</option>
-                  <option value="absent">Отсутствует</option>
-                </Select>
-              </Field>
-              {p.detection.mode === 'ai' && (
-                <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                  Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
+              {!afsAvailable && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    АФС не загружены. Детекция крон идёт по ортофотоплану, поэтому расчёт недоступен —
+                    остальные блоки модуля считаются по ВЛС и ЦММ.
+                  </div>
                 </div>
               )}
+              <div className={`space-y-4 ${detectionEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                <ParamModeSwitch
+                  mode={p.detection.mode}
+                  onChange={(mode) => set('detection', { ...p.detection, mode })}
+                  aiLabel="ИИ (нейросеть YOLOv5)"
+                  algorithmicLabel="Алгоритмически (водораздел)"
+                  aiHint="Границы сегментов крон определяет модель"
+                />
+                <Field label="Состояние вегетации">
+                  <Select
+                    value={p.detection.vegetation_state}
+                    onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
+                  >
+                    <option value="active">Активная</option>
+                    <option value="absent">Отсутствует</option>
+                  </Select>
+                </Field>
+                {p.detection.mode === 'ai' && (
+                  <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
+                    Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
+                  </div>
+                )}
+              </div>
             </div>
           </Accordion>
         </CardPad>
@@ -213,8 +274,16 @@ export default function Forest() {
         <CardPad>
           <Accordion title="Статистики по сегментам крон" defaultOpen={false}>
             <div className="space-y-4">
-              <Checkbox checked={p.stats.enabled} onChange={(v) => set('stats', { ...p.stats, enabled: v })} label="Собрать статистики" />
-              <div className={`space-y-4 ${p.stats.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+              <Checkbox
+                checked={p.stats.enabled}
+                onChange={(v) => set('stats', { ...p.stats, enabled: v })}
+                label="Собрать статистики"
+                disabled={!detectionEnabled}
+              />
+              {!detectionEnabled && (
+                <p className="hint-base">Статистики считаются по сегментам крон — требуется детекция крон</p>
+              )}
+              <div className={`space-y-4 ${p.stats.enabled && detectionEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
                 <div className="flex items-center gap-2">
                   <Field label="Перцентили (через запятую)" tooltip="Перцентили распределения высот точек внутри каждого сегмента кроны. Используются для оценки структуры древостоя." className="flex-1">
                     <Input

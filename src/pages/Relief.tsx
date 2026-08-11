@@ -6,7 +6,7 @@ import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, InfoHint, Select } from '@/components/ui/controls'
-import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod } from '@/api/types'
@@ -14,10 +14,62 @@ import { checkDependencies } from '@/lib/dependencies'
 
 const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
   smrf: 'SMRF',
+  las_class: 'Из классификации LAS',
   manual: 'Ручная',
   stat: 'Статистическая',
   range: 'Перцентильная',
   kmeans: 'Outlier',
+}
+
+// Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
+// изменения контракта, поэтому недостающие поля добираем из умолчаний.
+function withDefaults(rp?: ReliefParams): ReliefParams {
+  if (!rp) return defaultReliefParams
+  const d = defaultReliefParams
+  return {
+    ...d, ...rp,
+    filter: { ...d.filter, ...rp.filter },
+    smrf: { ...d.smrf, ...rp.smrf },
+    smoothing: { ...d.smoothing, ...rp.smoothing },
+    dsm: { ...d.dsm, ...rp.dsm },
+    derivatives: { ...d.derivatives, ...rp.derivatives },
+    heights: { ...d.heights, ...rp.heights },
+    vectors: { ...d.vectors, ...rp.vectors },
+  }
+}
+
+// Один слой в блоке «Интерполяция и экстраполяция». Параметры задаются
+// независимо для ЦМР, карты уклонов и карты экспозиций.
+function InterpolationBlock({ title, hint, enabled, amp, edge, disabled, disabledHint, onChange }: {
+  title: string
+  hint: string
+  enabled: boolean
+  amp: number
+  edge: number
+  disabled?: boolean
+  disabledHint?: string
+  onChange: (patch: { enabled?: boolean; amp?: number; edge?: number }) => void
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <span className="inline-flex items-center gap-1.5">
+        <Checkbox checked={enabled} onChange={(v) => onChange({ enabled: v })} label={title} disabled={disabled} />
+        <InfoHint text={hint} />
+      </span>
+      {disabled ? (
+        <p className="hint-base mt-2">{disabledHint}</p>
+      ) : (
+        <div className={`mt-2 space-y-3 ${enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+          <Field label="Амплитуда интерполяции" tooltip="inter_amp — радиус поиска значений при заполнении пустот обратно взвешенным расстоянием (IDW).">
+            <NumberInput value={amp} step={0.1} min={0} onChange={(v) => onChange({ amp: v })} />
+          </Field>
+          <Field label="Экстраполяция края, м" tooltip="На сколько метров допустимо выйти за границу валидной области. 0 — заполнять только внутренние дыры: пустоты, касающиеся рамки растра, остаются незаполненными.">
+            <NumberInput value={edge} step={1} min={0} onChange={(v) => onChange({ edge: v })} />
+          </Field>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function Relief() {
@@ -29,18 +81,21 @@ export default function Relief() {
   const addJob = useProjectStore((s) => s.addJob)
   const project = projects.find((p) => p.id === projectId)
   const [p, setP] = useState<ReliefParams>(() =>
-    (location.state as { retryParams?: ReliefParams } | null)?.retryParams ?? defaultReliefParams
+    withDefaults((location.state as { retryParams?: ReliefParams } | null)?.retryParams)
   )
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
-  // Маппинг предустановок сглаживания → sigma/expert-параметры
+  // Маппинг предустановок сглаживания → sigma/expert-параметры. В режиме
+  // «Пользовательское» sigma не подменяется — её задаёт пользователь.
   const handleSmoothingPreset = (v: SmoothingPreset) => {
-    set('smoothing_preset', v)
-    const sigmaByPreset: Record<SmoothingPreset, number> = { none: 0, light: 0.5, medium: 1.0, strong: 2.0 }
     setP((s) => ({
       ...s,
       smoothing_preset: v,
-      smoothing: { ...s.smoothing, enabled: v !== 'none', sigma: sigmaByPreset[v] },
+      smoothing: {
+        ...s.smoothing,
+        enabled: true,
+        sigma: v === 'custom' ? s.smoothing.sigma : SIGMA_BY_PRESET[v],
+      },
     }))
   }
 
@@ -96,6 +151,10 @@ export default function Relief() {
         resolutionPreset={p.output_resolution_preset}
         onSmoothingChange={handleSmoothingPreset}
         onResolutionChange={(v) => set('output_resolution_preset', v)}
+        customSmoothing={{ sigma: p.smoothing.sigma, order: p.smoothing.order, window: p.smoothing.window }}
+        onCustomSmoothingChange={(patch) => setP((s) => ({ ...s, smoothing: { ...s.smoothing, ...patch } }))}
+        customResolutionM={p.output_resolution_m}
+        onCustomResolutionChange={(v) => set('output_resolution_m', v)}
       />
 
       {/* Классификация рельефа */}
@@ -107,6 +166,10 @@ export default function Relief() {
                 <span className="inline-flex items-center gap-1.5">
                   <Radio checked={p.filter_method === 'smrf'} onChange={() => set('filter_method', 'smrf')} label="SMRF" />
                   <InfoHint text={METHOD_TOOLTIPS.smrf} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio checked={p.filter_method === 'las_class'} onChange={() => set('filter_method', 'las_class')} label="Из классификации LAS" />
+                  <InfoHint text={METHOD_TOOLTIPS.las_class} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <Radio checked={p.filter_method === 'manual'} onChange={() => set('filter_method', 'manual')} label="Ручная" />
@@ -148,6 +211,13 @@ export default function Relief() {
                 </div>
               )}
 
+              {p.filter_method === 'las_class' && (
+                <p className="hint-base">
+                  Земля берётся из классификации входного LAS (класс 2 по ASPRS). Собственная
+                  классификация не выполняется. Если в файле класса 2 нет, тайл отработает по SMRF.
+                </p>
+              )}
+
               {p.filter_method === 'smrf' && (
                 <div className="border-t border-slate-100 pt-3">
                   <div className="mb-2 flex items-center gap-2">
@@ -173,24 +243,6 @@ export default function Relief() {
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        {/* Сглаживание */}
-        <Card>
-          <CardPad>
-            <Accordion title="Сглаживание ЦМР">
-              <div className="space-y-3">
-                <Checkbox checked={p.smoothing.enabled} onChange={(v) => set('smoothing', { ...p.smoothing, enabled: v })} label="Включить сглаживание" />
-                <div className={`grid grid-cols-3 gap-3 ${p.smoothing.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-                  <Field label="sigma" tooltip="Коэффициент умножается на пространственное разрешение растра. Чем больше — тем сильнее сглаживание.">
-                    <NumberInput value={p.smoothing.sigma} step={0.1} onChange={(v) => set('smoothing', { ...p.smoothing, sigma: v })} />
-                  </Field>
-                  <Field label="order"><NumberInput value={p.smoothing.order} onChange={(v) => set('smoothing', { ...p.smoothing, order: v })} /></Field>
-                  <Field label="window"><NumberInput value={p.smoothing.window} onChange={(v) => set('smoothing', { ...p.smoothing, window: v })} /></Field>
-                </div>
-              </div>
-            </Accordion>
-          </CardPad>
-        </Card>
-
         {/* ЦММ — второй основной выход модуля, вход «Древостоя» */}
         <Card>
           <CardPad>
@@ -268,10 +320,13 @@ export default function Relief() {
                   <NumberInput value={p.derivatives.aspect_res} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, aspect_res: v })} disabled={!p.derivatives.aspect} className="w-28" />
                 </div>
                 <div>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Checkbox checked={p.derivatives.tpi} onChange={(v) => set('derivatives', { ...p.derivatives, tpi: v })} label="TPI (трёхмасштабный)" />
-                    <InfoHint text="Topographic Position Index — отклонение высоты точки от среднего в окрестности. Три радиуса (мелкий/средний/крупный) для выявления форм рельефа разного масштаба." />
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Checkbox checked={p.derivatives.tpi} onChange={(v) => set('derivatives', { ...p.derivatives, tpi: v })} label="TPI (трёхмасштабный)" />
+                      <InfoHint text="Topographic Position Index — отклонение высоты точки от среднего в окрестности. Три радиуса (мелкий/средний/крупный) для выявления форм рельефа разного масштаба. Правое поле — пространственное разрешение выходного растра TPI в метрах." />
+                    </span>
+                    <NumberInput value={p.derivatives.tpi_res} step={0.1} min={0.01} onChange={(v) => set('derivatives', { ...p.derivatives, tpi_res: v })} disabled={!p.derivatives.tpi} className="w-28" />
+                  </div>
                   {p.derivatives.tpi && (
                     <div className="mt-2 flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 text-xs text-slate-500">
@@ -291,25 +346,67 @@ export default function Relief() {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Checkbox checked={p.derivatives.interpolation} onChange={(v) => set('derivatives', { ...p.derivatives, interpolation: v })} label="Интерполяция (IDW)" />
-                    <InfoHint text="Inverse Distance Weighting — интерполяция ЦМР обратно взвешенным расстоянием. inter_amp — амплитуда сглаживания." />
-                  </span>
-                  <NumberInput value={p.derivatives.inter_amp} step={0.1} onChange={(v) => set('derivatives', { ...p.derivatives, inter_amp: v })} disabled={!p.derivatives.interpolation} className="w-28" />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="text-sm">Экстраполяция края, м</span>
-                    <InfoHint text="На сколько метров допустимо продлить ЦМР за границу валидной области. 0 — заполнять только внутренние дыры: тогда все пустоты, касающиеся рамки растра, остаются незаполненными." />
-                  </span>
-                  <NumberInput value={p.derivatives.edge_extrapolation_m} step={1} onChange={(v) => set('derivatives', { ...p.derivatives, edge_extrapolation_m: v })} disabled={!p.derivatives.interpolation} className="w-28" />
-                </div>
+                <p className="hint-base">
+                  Интерполяция и экстраполяция вынесены в отдельный блок ниже.
+                </p>
               </div>
             </Accordion>
           </CardPad>
         </Card>
       </div>
+
+      {/* Интерполяция и экстраполяция — раздельно по выходам */}
+      <Card>
+        <CardPad>
+          <Accordion title="Интерполяция и экстраполяция">
+            <div className="grid gap-3 md:grid-cols-3">
+              <InterpolationBlock
+                title="ЦМР"
+                hint="Заполнение пустот ЦМР перед расчётом производных. Выполняется до сглаживания и построения уклонов/экспозиций."
+                enabled={p.derivatives.interpolation}
+                amp={p.derivatives.inter_amp}
+                edge={p.derivatives.edge_extrapolation_m}
+                onChange={(patch) => set('derivatives', {
+                  ...p.derivatives,
+                  ...(patch.enabled !== undefined && { interpolation: patch.enabled }),
+                  ...(patch.amp !== undefined && { inter_amp: patch.amp }),
+                  ...(patch.edge !== undefined && { edge_extrapolation_m: patch.edge }),
+                })}
+              />
+              <InterpolationBlock
+                title="Карта уклонов"
+                hint="Заполнение пустот карты уклонов. Задаётся независимо от ЦМР."
+                enabled={p.derivatives.slopes_interpolation}
+                amp={p.derivatives.slopes_inter_amp}
+                edge={p.derivatives.slopes_edge_extrapolation_m}
+                disabled={!p.derivatives.slopes}
+                disabledHint="Карта уклонов выключена в блоке «Производные слои»"
+                onChange={(patch) => set('derivatives', {
+                  ...p.derivatives,
+                  ...(patch.enabled !== undefined && { slopes_interpolation: patch.enabled }),
+                  ...(patch.amp !== undefined && { slopes_inter_amp: patch.amp }),
+                  ...(patch.edge !== undefined && { slopes_edge_extrapolation_m: patch.edge }),
+                })}
+              />
+              <InterpolationBlock
+                title="Карта экспозиций"
+                hint="Заполнение пустот карты экспозиций. Задаётся независимо от ЦМР."
+                enabled={p.derivatives.aspect_interpolation}
+                amp={p.derivatives.aspect_inter_amp}
+                edge={p.derivatives.aspect_edge_extrapolation_m}
+                disabled={!p.derivatives.aspect}
+                disabledHint="Карта экспозиций выключена в блоке «Производные слои»"
+                onChange={(patch) => set('derivatives', {
+                  ...p.derivatives,
+                  ...(patch.enabled !== undefined && { aspect_interpolation: patch.enabled }),
+                  ...(patch.amp !== undefined && { aspect_inter_amp: patch.amp }),
+                  ...(patch.edge !== undefined && { aspect_edge_extrapolation_m: patch.edge }),
+                })}
+              />
+            </div>
+          </Accordion>
+        </CardPad>
+      </Card>
 
       {/* Высоты + TIN */}
       <Card>
@@ -323,7 +420,12 @@ export default function Relief() {
                     <Radio checked={p.heights.source === 'las'} onChange={() => set('heights', { ...p.heights, source: 'las' })} label="Из LAS-точек" />
                     <Radio checked={p.heights.source === 'dem'} onChange={() => set('heights', { ...p.heights, source: 'dem' })} label="Из растра ЦМР" />
                   </div>
-                  <Field label="Шаг точек (каждая n-я)"><NumberInput value={p.heights.step} onChange={(v) => set('heights', { ...p.heights, step: v })} className="w-28" /></Field>
+                  <Field
+                    label="Минимальное расстояние между точками, м"
+                    tooltip="Пространственное прореживание отметок: точки ближе указанного расстояния отбрасываются."
+                  >
+                    <NumberInput value={p.heights.min_distance_m} step={0.1} min={0} onChange={(v) => set('heights', { ...p.heights, min_distance_m: v })} className="w-28" />
+                  </Field>
                 </div>
               </div>
               <div className="border-t border-slate-100 pt-3">

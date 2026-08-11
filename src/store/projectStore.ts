@@ -13,16 +13,21 @@ export const defaultReliefParams: ReliefParams = {
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   smoothing_preset: 'medium',
   output_resolution_preset: 'native',
+  output_resolution_m: 1,
   dsm: { enabled: true, output_type: 'max', interpolate: true, fill_holes: true, max_search_distance: 100, edge_extrapolation_m: 5 },
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
-    tpi: true, tpi_radii: [270, 810, 2430],
+    tpi: true, tpi_res: 10, tpi_radii: [270, 810, 2430],
     // interpolation/inter_amp управляют заполнением пустот ЦМР (step_dtm →
     // FillConfig): значения выровнены с DerivativesParams бэкенда (True/100).
     interpolation: true, inter_amp: 100, edge_extrapolation_m: 5,
+    // Уклоны и экспозиции интерполируются независимо от ЦМР — по умолчанию
+    // повторяют её настройки.
+    slopes_interpolation: true, slopes_inter_amp: 100, slopes_edge_extrapolation_m: 5,
+    aspect_interpolation: true, aspect_inter_amp: 100, aspect_edge_extrapolation_m: 5,
   },
-  heights: { enabled: false, source: 'las', step: 10 },
+  heights: { enabled: false, source: 'las', min_distance_m: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
   target_crs: '',
   deterministic: true, seed: 42,
@@ -30,7 +35,7 @@ export const defaultReliefParams: ReliefParams = {
 
 export const defaultForestParams: ForestParams = {
   cmd: { enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
-  detection: { mode: 'ai', vegetation_state: 'active' },
+  detection: { enabled: true, mode: 'ai', vegetation_state: 'active' },
   stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'] },
   logging_category: {
     enabled: true,
@@ -47,6 +52,7 @@ export const defaultForestParams: ForestParams = {
     },
   },
   smoothing_preset: 'medium',
+  smoothing: { sigma: 1.0, order: 0, window: 3 },
   output_resolution_preset: 'native',
   dsm_source: { kind: 'system' },
   derivatives_source: { kind: 'system' },
@@ -54,8 +60,6 @@ export const defaultForestParams: ForestParams = {
 
 export const defaultWaterParams: WaterParams = {
   segment: { threshold: 0.7 },
-  output_resolution_preset: 'native',
-  dem_source: { kind: 'system' },
 }
 
 interface ProjectStore {
@@ -112,7 +116,8 @@ export const useProjectStore = create<ProjectStore>()(
             tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
           },
           vls: {
-            crs: '', extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
+            crs: '', vertical_crs: 'EPSG:5705 (Балтийская 1977)',
+            extent_area_km2: 1.0, density_pts_m2: 4577, tlo_scale: '1:500',
             tlo_height_range_m: [22.08, 1031.87],
             tiles_total: 1, tiles_ok: 1, tiles_failed: 0, failed_tiles: [],
           },

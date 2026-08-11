@@ -17,8 +17,10 @@ export interface Project {
 
 export type ProjectStatus = 'empty' | 'uploaded' | 'processing' | 'done' | 'error'
 
-export type SmoothingPreset = 'none' | 'light' | 'medium' | 'strong'
-export type ResolutionPreset = 'native' | '0.1m' | '0.25m' | '0.5m' | '1m' | '2m'
+// 'custom' — пользовательские настройки: значения берутся не из пресета, а из
+// явных полей (smoothing.* для сглаживания, output_resolution_m для разрешения).
+export type SmoothingPreset = 'light' | 'medium' | 'strong' | 'custom'
+export type ResolutionPreset = 'native' | '0.1m' | '0.25m' | '0.5m' | '1m' | '2m' | 'custom'
 
 export interface ReliefSource {
   kind: 'system' | 'upload'
@@ -54,6 +56,8 @@ export interface MaterialAssessment {
 
 export interface AfsReport {
   crs: string
+  /** Система высот. Может быть частью составной СК или отсутствовать в метаданных. */
+  vertical_crs?: string
   extent_area_km2: number
   resolution_m: number
   ofp_scale: string
@@ -65,6 +69,8 @@ export interface AfsReport {
 
 export interface VlsReport {
   crs: string
+  /** Система высот. Может быть частью составной СК или отсутствовать в метаданных. */
+  vertical_crs?: string
   extent_area_km2: number
   density_pts_m2: number
   tlo_scale: string
@@ -144,7 +150,9 @@ export interface Job {
 
 // ---- Параметры: Рельеф (#8,9,10,14) --------------------------------------
 
-export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf'
+// 'las_class' — земля берётся из готовой классификации LAS (ASPRS class 2),
+// собственная классификация не выполняется (backend: CheckClassification.is_ground).
+export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf' | 'las_class'
 
 export interface ReliefParams {
   filter_method: FilterMethod
@@ -174,6 +182,8 @@ export interface ReliefParams {
   }
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /** Разрешение выходного файла, м/пиксель. Действует при output_resolution_preset='custom'. */
+  output_resolution_m: number
   /**
    * ЦММ (цифровая модель местности, DSM) — второй основной выход «Рельефа»
    * наряду с ЦМР. Поля 1:1 к sima_relief_service.contract.DsmParams: сервис
@@ -193,16 +203,30 @@ export interface ReliefParams {
     aspect: boolean
     aspect_res: number
     tpi: boolean
+    tpi_res: number
     tpi_radii: number[]
+    /**
+     * Интерполяция и экстраполяция ЦМР — заполнение пустот перед расчётом
+     * производных (backend: step_dtm → FillConfig). Общие для всех выходов.
+     */
     interpolation: boolean
     inter_amp: number
     /** Допустимая экстраполяция ЦМР за границу валидной области, м (0 — только внутренние дыры). */
     edge_extrapolation_m: number
+    /** Интерполяция и экстраполяция карты уклонов — задаются независимо от ЦМР. */
+    slopes_interpolation: boolean
+    slopes_inter_amp: number
+    slopes_edge_extrapolation_m: number
+    /** Интерполяция и экстраполяция карты экспозиций — задаются независимо от ЦМР. */
+    aspect_interpolation: boolean
+    aspect_inter_amp: number
+    aspect_edge_extrapolation_m: number
   }
   heights: {
     enabled: boolean
     source: 'las' | 'dem'
-    step: number
+    /** Минимальное расстояние между точками отметок, м (пространственное прореживание). */
+    min_distance_m: number
   }
   vectors: {
     horizontals: number[]
@@ -229,6 +253,8 @@ export interface ForestParams {
     median_window: number
   }
   detection: {
+    /** Детекция крон — опциональный расчёт; от неё зависят статистики по сегментам. */
+    enabled: boolean
     mode: ParamMode
     vegetation_state: 'active' | 'absent'
   }
@@ -237,6 +263,12 @@ export interface ForestParams {
     percentiles: number[]
     vci_step: number
     metrics: string[]
+  }
+  /** Экспертные параметры сглаживания — действуют при smoothing_preset='custom'. */
+  smoothing: {
+    sigma: number
+    order: number
+    window: number
   }
   logging_category: {
     enabled: boolean
@@ -254,21 +286,23 @@ export interface ForestParams {
   output_resolution_preset: ResolutionPreset
   /** Цифровая модель местности (ЦММ) из сессии «Рельефа». */
   dsm_source: ReliefSource
+  /**
+   * Производные рельефа. Отдельного выбора в интерфейсе нет: источник
+   * подставляется автоматически из той же сессии, что и ЦММ.
+   */
   derivatives_source: ReliefSource
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
-// Входы модуля — АФС проекта и ЦМР из сессии «Рельефа». «Древостой» в цепочке
-// «Воды» не участвует.
+// Единственный вход модуля — АФС проекта: маска воды строится нейросетью по
+// ортофотоплану. ЦМР, ЦМД и производные рельефа в цепочке «Воды» не участвуют,
+// поэтому от сессии «Рельефа» модуль не зависит.
 
 export interface WaterParams {
   segment: {
     /** Порог уверенности модели: 0.01…1 с шагом 0.01. */
     threshold: number
   }
-  output_resolution_preset: ResolutionPreset
-  /** Цифровая модель рельефа (ЦМР) из сессии «Рельефа». */
-  dem_source: ReliefSource
 }
 
 // ---- Выходные артефакты (Блок Г) -----------------------------------------

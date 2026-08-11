@@ -11,20 +11,25 @@ export interface DependencyCheck {
   missing: { layer: string; tab: string }[]
 }
 
-// Источники, которые могут закрывать зависимость модуля от предыдущего расчёта:
-// Forest — ЦММ и производные рельефа, Water — ЦМР. Оба берутся из завершённых
-// сессий «Рельефа», поэтому оба модуля зависят от него, а не друг от друга.
+// Источник, закрывающий зависимость «Древостоя» от предыдущего расчёта: ЦММ из
+// завершённой сессии «Рельефа». Производные рельефа отдельно не выбираются —
+// они берутся из той же сессии. «Вода» считается только по АФС и от «Рельефа»
+// не зависит.
 export interface DependencySources {
   dsm_source?: ReliefSource
-  derivatives_source?: ReliefSource
-  dem_source?: ReliefSource
 }
 
-// Проверка, что у проекта загружены исходные материалы (АФС + ВЛС).
-function hasAssessment(projectId: string): boolean {
+// Проверки загруженных исходных материалов. АФС и ВЛС проверяются раздельно:
+// без АФС проект работает в режиме «только ВЛС» (Рельеф и Древостой без
+// детекции крон), без ВЛС не считается ничего, кроме «Воды».
+function hasVls(projectId: string): boolean {
   const { assessment } = useProjectStore.getState()
-  const a = assessment[projectId]
-  return !!(a && a.afs && a.vls)
+  return !!assessment[projectId]?.vls
+}
+
+export function hasAfs(projectId: string): boolean {
+  const { assessment } = useProjectStore.getState()
+  return !!assessment[projectId]?.afs
 }
 
 // Проверка, что в проекте есть успешно завершённая задача данного типа.
@@ -45,27 +50,23 @@ export function checkDependencies(projectId: string, module: JobType, sources?: 
   const missing: { layer: string; tab: string }[] = []
 
   if (module === 'relief') {
-    if (!hasAssessment(projectId)) {
-      missing.push({ layer: 'АФС + ВЛС', tab: 'Загрузка данных' })
+    // Рельеф считается по ВЛС: без АФС модуль работает полностью.
+    if (!hasVls(projectId)) {
+      missing.push({ layer: 'ВЛС', tab: 'Загрузка данных' })
     }
   } else if (module === 'forest') {
-    if (!hasAssessment(projectId)) {
-      missing.push({ layer: 'АФС + ВЛС', tab: 'Загрузка данных' })
+    if (!hasVls(projectId)) {
+      missing.push({ layer: 'ВЛС', tab: 'Загрузка данных' })
     }
-    const reliefOk =
-      hasSuccessfulJob(projectId, 'relief') ||
-      (sourceSatisfied(sources?.dsm_source) && sourceSatisfied(sources?.derivatives_source))
+    const reliefOk = hasSuccessfulJob(projectId, 'relief') || sourceSatisfied(sources?.dsm_source)
     if (!reliefOk) {
       missing.push({ layer: 'ЦММ (Рельеф)', tab: 'Рельеф' })
     }
   } else if (module === 'water') {
-    // Вода считается по АФС и ЦМР: «Древостой» в цепочке не участвует.
-    if (!hasAssessment(projectId)) {
-      missing.push({ layer: 'АФС + ВЛС', tab: 'Загрузка данных' })
-    }
-    const reliefOk = hasSuccessfulJob(projectId, 'relief') || sourceSatisfied(sources?.dem_source)
-    if (!reliefOk) {
-      missing.push({ layer: 'ЦМР (Рельеф)', tab: 'Рельеф' })
+    // Вода считается нейросетью по ортофотоплану: без АФС считать нечего,
+    // от сессий «Рельефа» модуль не зависит.
+    if (!hasAfs(projectId)) {
+      missing.push({ layer: 'АФС', tab: 'Загрузка данных' })
     }
   }
 
