@@ -85,7 +85,9 @@ class DerivativesParams:
 class HeightsParams:
     enabled: bool = False
     source: str = "las"  # 'las' | 'dem'
-    step: int = 10
+    # Минимальное расстояние между отметками, м (пространственное прореживание,
+    # аналог PDAL filters.sample). 0 — брать все ground-точки.
+    min_distance_m: float = 10.0
 
 
 @dataclass

@@ -15,6 +15,8 @@ import laspy
 import numpy as np
 from scipy.spatial import Delaunay
 
+from sima_dem_core.thinning import thin_by_min_distance
+
 
 def _write_dxf_3dface(points_xyz: np.ndarray, simplices: np.ndarray, out_path: str) -> None:
     """Записать TIN-треугольники как 3DFACE-сущности DXF R12 (ASCII)."""
@@ -77,10 +79,14 @@ def build_tin(points_xyz: np.ndarray, out_path: str, crs_wkt: Optional[str] = No
 def build_tin_from_las(
     las_path: str,
     out_path: str,
-    step: int = 10,
+    min_distance_m: float = 10.0,
     crs_wkt: Optional[str] = None,
 ) -> str:
-    """Прочитать ground-точки (Classification==2) из LAS, взять каждую n-ю, TIN → .dxf."""
+    """Ground-точки (Classification==2) из LAS, прорежённые по расстоянию, TIN → .dxf.
+
+    min_distance_m — минимальное расстояние между узлами триангуляции, м
+    (тот же параметр, что и у отметок высот). 0 — без прореживания.
+    """
     las = laspy.read(las_path)
     cls = np.asarray(las.classification)
     x = np.asarray(las.x)
@@ -89,7 +95,7 @@ def build_tin_from_las(
     mask = cls == 2
     if not np.any(mask):
         mask = np.ones_like(cls, dtype=bool)  # нет ground — берём все точки
-    pts = np.column_stack([x[mask], y[mask], z[mask]])
-    if step and step > 1:
-        pts = pts[::step]
+    xs, ys, zs = x[mask], y[mask], z[mask]
+    keep = thin_by_min_distance(xs, ys, min_distance_m)
+    pts = np.column_stack([xs[keep], ys[keep], zs[keep]])
     return build_tin(pts, out_path, crs_wkt=crs_wkt)

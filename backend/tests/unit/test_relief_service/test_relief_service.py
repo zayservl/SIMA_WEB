@@ -134,6 +134,23 @@ class TestTinShp:
         # минимум 2 треугольника
         assert txt.count("3DFACE") >= 2
 
+    def test_build_tin_from_las_min_distance(self, tmp_path):
+        """Узлы TIN прорежены по расстоянию: плотная сетка даёт меньше точек."""
+        import laspy
+        from sima_relief_service.tin import build_tin_from_las
+        gx, gy = np.meshgrid(np.arange(0, 20, 1.0), np.arange(0, 20, 1.0))
+        gx, gy = gx.ravel(), gy.ravel()
+        las = laspy.create(point_format=3, file_version="1.2")
+        las.x, las.y = gx, gy
+        las.z = np.full(gx.size, 100.0)
+        las.classification = np.full(gx.size, 2, dtype=np.uint8)
+        inp = str(tmp_path / "ground.las")
+        las.write(inp)
+
+        dense = build_tin_from_las(inp, str(tmp_path / "dense.dxf"), min_distance_m=0)
+        sparse = build_tin_from_las(inp, str(tmp_path / "sparse.dxf"), min_distance_m=5.0)
+        assert Path(dense).read_text().count("3DFACE") > Path(sparse).read_text().count("3DFACE")
+
     def test_build_tin_too_few_points(self, tmp_path):
         from sima_relief_service.tin import build_tin
         with pytest.raises(ValueError):
@@ -177,7 +194,7 @@ class TestSteps:
         from sima_relief_service.contract import ReliefParams, HeightsParams
         dtm = str(tmp_path / "d.tif")
         _make_dtm_tif(dtm, size=20)
-        params = ReliefParams(heights=HeightsParams(enabled=True, source="dem", step=2))
+        params = ReliefParams(heights=HeightsParams(enabled=True, source="dem", min_distance_m=2.0))
         out_dir = str(tmp_path / "out")
         Path(out_dir).mkdir()
         out = steps.step_heights(None, params, out_dir, "EPSG:32642", dem_path=dtm, stem="tile1")
@@ -210,7 +227,7 @@ class TestReliefService:
             target_crs="EPSG:32642",
             derivatives=DerivativesParams(slopes=True, aspect=True, tpi=False, interpolation=True),
             vectors=VectorsParams(horizontals=[5.0], tin=False),
-            heights=HeightsParams(enabled=True, source="dem", step=3),
+            heights=HeightsParams(enabled=True, source="dem", min_distance_m=3.0),
         )
         req = ReliefRequest(params=params, project_id="proj1", resolution=1.0,
                             tiles=[TileInput(name="tile1", existing_dtm=dtm)])

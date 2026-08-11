@@ -2,7 +2,7 @@
 
 Каждый шаг — чистая функция: входной артефакт → выходной артефакт(ы).
 Обёртки над вычислительным ядром sima-dem-* (GroundProcessing, DSMBuilder,
-CurvatureProcessing, calculate_tpi, generate_contours, get_every_nth) +
+CurvatureProcessing, calculate_tpi, generate_contours, extract_heights) +
 новые TIN/.shp. Шаги детерминированы и тестируются изолированно.
 
 Последовательность (Q3 «Анализ рельефа»):
@@ -19,7 +19,7 @@ from typing import Optional
 from sima_dem_core.curvature import CurvatureProcessing
 from sima_dem_core.crop import Crop
 from sima_dem_core.filters import ManualFilter, StatFilter, RangeFilter, OutlierFilter
-from sima_dem_core.height import get_every_nth
+from sima_dem_core.height import extract_heights
 from sima_dem_core.raster.contours import generate_contours
 from sima_dem_core.raster.holes import px_from_metres
 from sima_dem_core.raster.tpi import calculate_tpi
@@ -206,11 +206,11 @@ def step_contours(base_raster: str, intervals: list, out_dir: str, crs: str) -> 
     return paths
 
 
-def step_tin(las_path: str, step: int, out_dir: str, crs: str, stem: Optional[str] = None) -> str:
+def step_tin(las_path: str, min_distance_m: float, out_dir: str, crs: str, stem: Optional[str] = None) -> str:
     """TIN-поверхность из ground-точек LAS → .dxf (требование Q3)."""
     name = stem or _stem(las_path)
     out_path = os.path.join(out_dir, f"{name}_tin.dxf")
-    build_tin_from_las(las_path, out_path, step=step, crs_wkt=crs)
+    build_tin_from_las(las_path, out_path, min_distance_m=min_distance_m, crs_wkt=crs)
     return out_path
 
 
@@ -228,8 +228,8 @@ def step_heights(
     name = stem or _stem(las_path or (dem_path or "heights"))
     out_path = os.path.join(out_dir, f"{name}_alt.shp")
     source_dem = dem_path if params.heights.source == "dem" else None
-    get_every_nth(
-        las_path=las_path or "", n=params.heights.step,
+    extract_heights(
+        las_path=las_path or "", min_distance_m=params.heights.min_distance_m,
         result_layer_name=out_path, crs=crs, out_format="shp",
         dem_path=source_dem,
     )

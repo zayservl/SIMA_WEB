@@ -1,10 +1,15 @@
-"""Извлечение отметок высот (каждая n-я точка Ground или регулярная сетка из ЦМР).
+"""Извлечение отметок высот (ground-точки LAS или регулярная сетка из ЦМР).
 
 Порт из legacy `relief_analysis/height.py`. Без QGIS — использует shapely/ogr.
 Два источника (Q3/контракт heights.source):
-  - 'las': каждая n-я ground-точка (Classification==2) из LAS;
-  - 'dem':  регулярная сетка высот, сэмплированная из растра ЦМР.
+  - 'las': ground-точки (Classification==2) из LAS, прорежённые по минимальному
+    расстоянию между точками;
+  - 'dem':  регулярная сетка высот, сэмплированная из растра ЦМР с тем же шагом.
 Два формата вывода (Q3): 'geojson' (по умолчанию, обратно-совместимо) и 'shp'.
+
+Прореживание задаётся расстоянием в метрах (контракт heights.min_distance_m),
+а не номером каждой n-й точки: плотность отметок не должна зависеть от
+плотности исходного облака.
 """
 
 from __future__ import annotations
@@ -16,8 +21,10 @@ from typing import Optional
 import laspy
 import numpy as np
 
+from sima_dem_core.thinning import thin_by_min_distance
 
-def _heights_from_las(las_path: str, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+def _heights_from_las(las_path: str, min_distance_m: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     las = laspy.read(las_path)
     cls = np.asarray(las.classification)
     x = np.asarray(las.x)
@@ -25,17 +32,22 @@ def _heights_from_las(las_path: str, n: int) -> tuple[np.ndarray, np.ndarray, np
     z = np.asarray(las.z)
     mask = cls == 2  # только ground; при отсутствии — пустой результат (как в legacy)
     x_g, y_g, z_g = x[mask], y[mask], z[mask]
-    return x_g[::n], y_g[::n], z_g[::n]
+    keep = thin_by_min_distance(x_g, y_g, min_distance_m)
+    return x_g[keep], y_g[keep], z_g[keep]
 
 
-def _heights_from_dem(dem_path: str, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Регулярная сетка высот из растра ЦМР: каждая n-я ячейка по строкам/столбцам."""
+def _heights_from_dem(dem_path: str, min_distance_m: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Регулярная сетка высот из растра ЦМР с шагом не менее min_distance_m."""
     import rasterio
     with rasterio.open(dem_path) as src:
         arr = src.read(1)
         nodata = src.nodata
         t = src.transform
         h, w = arr.shape
+        # Шаг сетки в пикселях: минимальное расстояние, пересчитанное через размер
+        # пикселя растра. Меньше одного пикселя сетка быть не может.
+        pixel = max(abs(t.a), abs(t.e)) or 1.0
+        n = max(1, int(round(min_distance_m / pixel))) if min_distance_m and min_distance_m > 0 else 1
         ys, xs = np.indices((h, w))
         xs = xs[::n, ::n].ravel()
         ys = ys[::n, ::n].ravel()
@@ -96,9 +108,9 @@ def _write_shp(x: np.ndarray, y: np.ndarray, z: np.ndarray, out: str, crs: str) 
     ds = None
 
 
-def get_every_nth(
+def extract_heights(
     las_path: str,
-    n: int,
+    min_distance_m: float,
     result_layer_name: str,
     crs: str,
     out_format: str = "geojson",
@@ -108,7 +120,7 @@ def get_every_nth(
 
     Args:
         las_path: путь к LAS-файлу (источник 'las') либо игнорируется при source='dem'.
-        n: шаг выборки.
+        min_distance_m: минимальное расстояние между отметками, м. 0 — без прореживания.
         result_layer_name: путь выходного файла (.geojson или .shp).
         crs: CRS-строка (EPSG:XXXX или WKT).
         out_format: 'geojson' (по умолчанию) или 'shp' (требование Q3 — отметки .shp).
@@ -116,9 +128,9 @@ def get_every_nth(
             сетка из растра, а не LAS). Q3 «Высота на ЦМР».
     """
     if dem_path is not None:
-        x, y, z = _heights_from_dem(dem_path, n)
+        x, y, z = _heights_from_dem(dem_path, min_distance_m)
     else:
-        x, y, z = _heights_from_las(las_path, n)
+        x, y, z = _heights_from_las(las_path, min_distance_m)
     if out_format == "shp":
         _write_shp(x, y, z, result_layer_name, crs)
     else:

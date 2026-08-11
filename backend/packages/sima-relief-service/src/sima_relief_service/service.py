@@ -186,7 +186,7 @@ class ReliefService:
                 arts.append(S._artifact(c, "shp", "contours"))
         if params.vectors.tin:
             tin = self._step(tile, "tin", lambda: S.step_tin(
-                ground_las or las, params.heights.step, out_dir, crs,
+                ground_las or las, params.heights.min_distance_m, out_dir, crs,
                 stem=os.path.splitext(os.path.basename(tile_in.name))[0]))
             arts.append(S._artifact(tin, "dxf", "tin"))
 

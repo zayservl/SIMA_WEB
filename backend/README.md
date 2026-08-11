@@ -113,7 +113,7 @@ crop → filter → ЦМР (DTM) → ЦММ (DSM) → smooth → slope/aspect/TP
 | `dsm` | DsmParams | disabled | ЦММ (DSM): output_type=max, interpolate=True |
 | `derivatives` | DerivativesParams | defaults | Уклон/экспозиция/TPI + интерполяция дырок |
 | `vectors` | VectorsParams | defaults | Горизонтали [0.5, 2, 5, 10] м + TIN |
-| `heights` | HeightsParams | disabled | Отметки высот: source=las, step=10 |
+| `heights` | HeightsParams | disabled | Отметки высот: source=las, min_distance_m=10 |
 | `deterministic` | bool | False | Детерминизм (seed) |
 
 ### Выходные артефакты
@@ -144,7 +144,7 @@ params = ReliefParams(
     dsm=DsmParams(enabled=True),
     derivatives=DerivativesParams(slopes=True, aspect=True, tpi=True),
     vectors=VectorsParams(horizontals=[0.5, 2.0, 5.0, 10.0], tin=True),
-    heights=HeightsParams(enabled=True, source="las", step=10),
+    heights=HeightsParams(enabled=True, source="las", min_distance_m=10.0),
 )
 request = ReliefRequest(
     params=params, project_id="demo", resolution=1.0,
@@ -300,7 +300,6 @@ result = svc.run(request)
 - **slope/aspect теряют внешний пиксель растра** — `gdal.DEMProcessing(...)` вызывается без `computeEdges=True`, поэтому крайняя строка/столбец уклона и экспозиции — nodata, даже если исходная ЦМР там валидна (`sima_dem_core/curvature.py`). Важно для бесшовной мозаики тайлов.
 - **SMRF использует все типы возвратов** (`SMRFConfig.returns` по умолчанию `first/last/intermediate/only`), а не `last,only`, как рекомендует Pingel et al. 2013 — включение первых/промежуточных возвратов (чаще не-грунтовых в растительности) в SMRF отклоняется от типовой практики.
 - **CRS не валидируется** между AOI/LAS/DEM в нескольких местах (`ground.py::_maybe_crop_stage`, `crop.py::Crop.cropCalc`, `height.py`) — риск тихого рассинхрона систем координат при прямом использовании библиотеки вне сервисного слоя.
-- **Децимация отметок высот из LAS** (`height.py::_heights_from_las`, `step`-й по счёту точка) идёт по порядку точек в файле (обычно порядок сканирования, не пространственный) — не гарантирует равномерного распределения по площади, в отличие от `_heights_from_dem` (растровый шаг, корректно равномерный).
 - **`determinism.py`** выставляет `PYTHONHASHSEED` в `os.environ` уже во время выполнения процесса — эффекта на текущий интерпретатор это не даёт; в проверенном коде не найдено шагов со случайностью, которые seed реально бы фиксировал.
 - **`crop.py`** обрезка AOI — точечный `shapely.contains()` в цикле на чистом Python; не рассчитан на объёмы реального LiDAR (10-100M точек), для продуктизации потребует векторизации/пространственного индекса.
 - **Метаданные пакетов** — во всех `pyproject.toml` (4 пакета) отсутствуют `license`/`authors`/`classifiers`, версии `gdal`/`pdal` не закреплены (в отличие от numpy/scipy).

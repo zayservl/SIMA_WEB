@@ -178,7 +178,7 @@ def default_params(crs_wkt: str, resolution: float = 1.0) -> ReliefParams:
             edge_extrapolation_m=5.0,
         ),
         vectors=VectorsParams(horizontals=[0.5, 2.0, 5.0, 10.0], tin=True),
-        heights=HeightsParams(enabled=True, source="las", step=10),
+        heights=HeightsParams(enabled=True, source="las", min_distance_m=10.0),
         deterministic=True, seed=42,
     )
 
