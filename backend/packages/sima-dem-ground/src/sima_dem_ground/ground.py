@@ -16,11 +16,10 @@ from typing import Optional
 import pdal
 import rasterio
 import numpy as np
-from rasterio.fill import fillnodata
 from osgeo import gdal
 
 from sima_dem_core.check_classification import CheckClassification
-from sima_dem_core.raster.holes import fillable_mask, px_from_metres
+from sima_dem_core.raster.holes import fill_voids, px_from_metres
 
 
 @dataclass
@@ -51,6 +50,9 @@ class FillConfig:
     max_search_distance: int = 100
     smoothing_iterations: int = 0
     fallback_to_min_z: bool = True
+    # Проходов заполнения пустот; 1 — историческое однопроходное поведение.
+    # См. sima_dem_core.raster.holes.fill_voids.
+    fill_passes: int = 3
     # Насколько (в метрах) допустимо экстраполировать за границу валидной
     # области. 0 — только внутренние дыры, как было исторически; такое
     # поведение выбрасывало все пустоты, касающиеся рамки растра, даже
@@ -273,7 +275,9 @@ class GroundProcessing:
         """Интерполирует пустоты растра через fillnodata.
 
         Заполняются внутренние дыры и, если задан `fill.edge_extrapolation_m`,
-        пустоты не далее этого расстояния от валидных данных.
+        пустоты не далее этого расстояния от валидных данных. Проходов —
+        `fill.fill_passes`: часть пустот замыкается в дыру только после
+        заполнения соседних (см. sima_dem_core.raster.holes.fill_voids).
         """
         with rasterio.open(raster) as src:
             profile = src.profile
@@ -285,17 +289,16 @@ class GroundProcessing:
             return
 
         valid = mask == 255
-        holes = fillable_mask(
-            valid, px_from_metres(self.fill.edge_extrapolation_m, self.resolution))
-        if not np.any(holes):
-            return
-
-        arr_filled = fillnodata(
-            arr.copy(), mask=mask,
+        arr, filled = fill_voids(
+            arr, valid,
             max_search_distance=self.fill.max_search_distance,
             smoothing_iterations=self.fill.smoothing_iterations,
+            max_extrapolation_px=px_from_metres(
+                self.fill.edge_extrapolation_m, self.resolution),
+            max_passes=self.fill.fill_passes,
         )
-        arr = np.where(holes, arr_filled, arr)
+        if not np.any(filled):
+            return
 
         with rasterio.open(raster, "w", **profile) as dest:
             dest.write_band(1, arr)

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from sima_dem_core.raster.holes import fillable_mask, px_from_metres
+from sima_dem_core.raster.holes import fill_voids, fillable_mask, px_from_metres
 
 
 class TestFillableMask:
@@ -54,6 +54,75 @@ class TestFillableMask:
         valid = np.ones((10, 10), dtype=bool)
         valid[:, 7:] = False
         assert not fillable_mask(valid, -1.0).any()
+
+
+class TestFillVoids:
+    """Многопроходное заполнение пустот (`fill_voids`)."""
+
+    NODATA = -9999.0
+
+    def _lake_with_channel(self):
+        """Растр 60x60: «озеро» 20x20, соединённое протокой с краем растра.
+
+        До заполнения озеро не является внутренней дырой — оно сообщается с
+        внешней пустотой через протоку шириной 2 px. Именно этот случай один
+        проход `fillnodata` не закрывает.
+        """
+        arr = np.full((60, 60), 100.0, dtype="float32")
+        valid = np.ones((60, 60), dtype=bool)
+        valid[20:40, 20:40] = False           # озеро
+        valid[29:31, 40:] = False             # протока до правой рамки
+        arr[~valid] = self.NODATA
+        return arr, valid
+
+    def test_single_pass_leaves_lake_closed_by_its_own_fill(self):
+        arr, valid = self._lake_with_channel()
+        _, filled = fill_voids(arr, valid, max_extrapolation_px=5.0, max_passes=1)
+        lake = np.zeros_like(valid)
+        lake[20:40, 20:40] = True
+        assert not filled[lake].all(), "за один проход озеро не заполняется целиком"
+
+    def test_second_pass_closes_it(self):
+        arr, valid = self._lake_with_channel()
+        _, filled = fill_voids(arr, valid, max_extrapolation_px=5.0, max_passes=3)
+        lake = np.zeros_like(valid)
+        lake[20:40, 20:40] = True
+        assert filled[lake].all()
+
+    def test_valid_cells_never_change(self):
+        """Ключевая гарантия: исходные измерения не переинтерполируются."""
+        rng = np.random.default_rng(0)
+        arr, valid = self._lake_with_channel()
+        arr[valid] = rng.normal(100.0, 5.0, size=int(valid.sum())).astype("float32")
+        for passes in (1, 2, 5):
+            out, _ = fill_voids(arr, valid, max_extrapolation_px=5.0, max_passes=passes)
+            assert np.array_equal(out[valid], arr[valid])
+
+    def test_outward_growth_bounded_by_allowance(self):
+        """Проходы не сдвигают внешнюю границу данных дальше допуска."""
+        arr = np.full((40, 40), 100.0, dtype="float32")
+        valid = np.ones((40, 40), dtype=bool)
+        valid[:, 20:] = False                 # пустота до правой рамки
+        arr[~valid] = self.NODATA
+        for passes in (1, 3, 8):
+            _, filled = fill_voids(arr, valid, max_extrapolation_px=3.0, max_passes=passes)
+            assert filled[:, 20:23].all()
+            assert not filled[:, 23:].any(), "экстраполяция нарастает с проходами"
+
+    def test_converges_and_is_monotonic(self):
+        """Лишние проходы ничего не добавляют и не переписывают заполненное."""
+        arr, valid = self._lake_with_channel()
+        out3, filled3 = fill_voids(arr, valid, max_extrapolation_px=5.0, max_passes=3)
+        out9, filled9 = fill_voids(arr, valid, max_extrapolation_px=5.0, max_passes=9)
+        assert np.array_equal(filled3, filled9)
+        assert np.array_equal(out3, out9)
+
+    def test_nothing_to_fill_returns_original(self):
+        arr = np.full((10, 10), 5.0, dtype="float32")
+        valid = np.ones((10, 10), dtype=bool)
+        out, filled = fill_voids(arr, valid, max_extrapolation_px=5.0)
+        assert not filled.any()
+        assert np.array_equal(out, arr)
 
 
 class TestPxFromMetres:
