@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sima-dem-dsm"
 version = "0.1.0"
-description = "СИМА — ЦМД: построение цифровой модели поверхности (DSM)"
+description = "СИМА — ЦММ: построение цифровой модели местности (DSM)"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.20",

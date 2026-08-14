@@ -3,7 +3,7 @@
 Вычислительная библиотека ЦМР/ЦММ/рельефа. Порт из legacy QGIS-плагина в чистый Python.
 Без QGIS, PyQt5. С использованием GDAL, PDAL, rasterio, laspy, scipy, numpy, opencv.
 
-## Структура — 4 пакета
+## Структура — 5 пакетов
 
 ```
 backend/
@@ -23,6 +23,14 @@ backend/
 │   ├── sima-dem-dsm/            # ЦММ (DSMBuilder, output_type=max)
 │   │   └── src/sima_dem_dsm/
 │   │       └── dsm.py                  # DSMConfig, DSMBuilder
+│   ├── sima-forest-cmd/         # ЦМД: древостой — растр полога, деревья, кроны
+│   │   └── src/sima_forest_cmd/
+│   │       ├── chm.py                  # CHMConfig, CHMBuilder (hag_delaunay → max)
+│   │       ├── treetops.py             # детекция вершин, высота дерева
+│   │       ├── crowns.py               # водораздел крон, полигоны, площади
+│   │       ├── afs.py                  # отсев и уточнение вершин по снимку
+│   │       ├── diameter.py             # диаметр ствола — интерфейс, алгоритм не реализован
+│   │       └── vector_io.py            # запись деревьев и крон в shapefile
 │   └── sima-relief-service/     # Сервисный слой: оркестрация, статусы, сессии, оценка материалов
 │       └── src/sima_relief_service/
 │           ├── contract.py             # ReliefParams / ReliefRequest / DsmParams / SmrfParams / ...
@@ -35,10 +43,11 @@ backend/
 │           ├── tin.py                  # TIN → DXF (scipy Delaunay)
 │           └── shp_io.py               # OGR shapefile writer
 ├── tests/
-│   ├── unit/                    # Unit-тесты (92 теста)
+│   ├── unit/                    # Unit-тесты (169 тестов)
 │   ├── integration/             # Интеграционные тесты (8 тестов; часть требует test_data/, часть — синтетика)
 │   └── conftest.py
 ├── relief_demo.ipynb            # Единый demo-ноутбук сервиса рельефа
+├── forest_s3_yuilskiy.ipynb     # ЦМД и деревья на Юильском: сверка с эталоном СИМА 1.44
 ├── run_dsm_demo.py              # Скрипт запуска ЦМР/ЦММ на двух датасетах
 └── pyproject.toml
 ```
@@ -53,11 +62,12 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 export PATH="/opt/homebrew/bin:$PATH"
-pip install numpy scipy laspy rasterio shapely pyproj opencv-python
+pip install numpy scipy laspy rasterio shapely pyproj opencv-python scikit-image
 pip install gdal pdal
 pip install -e packages/sima-dem-core
 pip install -e packages/sima-dem-ground
 pip install -e packages/sima-dem-dsm
+pip install -e packages/sima-forest-cmd
 pip install -e packages/sima-relief-service
 pip install pytest pytest-cov
 ```
@@ -69,10 +79,11 @@ sudo apt install gdal-bin libgdal-dev pdal
 conda create -n sima python=3.12
 conda activate sima
 conda install gdal pdal
-pip install numpy scipy laspy rasterio shapely pyproj opencv-python
+pip install numpy scipy laspy rasterio shapely pyproj opencv-python scikit-image
 pip install -e packages/sima-dem-core
 pip install -e packages/sima-dem-ground
 pip install -e packages/sima-dem-dsm
+pip install -e packages/sima-forest-cmd
 pip install -e packages/sima-relief-service
 ```
 
@@ -191,6 +202,169 @@ jupyter notebook relief_demo.ipynb
 | `max_extrapolation_px` | float | 0.0 | Допустимая экстраполяция за границу данных, px |
 | `fill_passes` | int | 3 | Проходов заполнения |
 | `fill_method` | str | "laplace" | Метод интерполяции пустот |
+
+## ЦМД — древостой (sima-forest-cmd)
+
+### Конвейер
+
+```
+облако → ЦМД (растр полога) → вершины деревьев → кроны → [корректировка по АФС] → shapefile
+```
+
+ЦМД строится отдельным проходом PDAL по облаку: `filters.hag_delaunay` считает
+превышение точки над триангулированной поверхностью земли, `Z` заменяется этим
+превышением, результат растеризуется максимумом в ячейке. Нормализация выполняется
+внутри модуля, поэтому **абсолютный уровень высот безразличен**: облако в ТЛО
+(нормализованные высоты) и облако в абсолютных отметках дают один результат. ЦМД
+не строится вычитанием ЦМР из ЦММ и наличия этих растров не требует — этим она
+отличается от ЦМР, которая на ТЛО вырождается в константу.
+
+### Сходимость с легаси
+
+На 12 тайлах Юильского при параметрах СИМА 1.44 (0.5 м, окно 1 м, медиана 1 px)
+найдено 256 804 дерева против 266 753 в эталоне — медиана отношения **0.969×**
+(диапазон 0.950…1.030), расхождение медианной высоты дерева 0.04 м.
+Прогон и сверка — в `forest_s3_yuilskiy.ipynb`.
+
+### Разрешение решает
+
+Окно поиска задаётся в метрах, но переводится в целое число пикселей, поэтому его
+фактический поперечник равен `2 · radius_px · res + res` и зависит от сетки:
+
+| Разрешение ЦМД | радиус окна | фактическое окно | найдено деревьев |
+|---|---|---|---|
+| 0.5 м | 2 px | 2.5 м | 256 804 (0.97× эталона) |
+| 1.0 м | 1 px | 3.0 м | 164 648 (0.62× эталона) |
+
+Переход на метровую сетку теряет **35.9 %** деревьев: окно физически шире, а
+соседние кроны на грубой сетке сливаются в один максимум.
+
+### CHMConfig — построение растра ЦМД
+
+| Поле | Тип | Default | Описание |
+|---|---|---|---|
+| `resolution` | float | 0.5 | Разрешение растра, м |
+| `output_type` | str | "max" | Тип растеризации (max — верхняя точка полога) |
+| `data_type` | str | "float32" | Тип данных выходного GeoTIFF |
+| `gdaldriver` | str | "GTiff" | Драйвер GDAL |
+| `interpolate` | bool | True | Запускать заполнение пустот после растеризации |
+| `fill_holes` | bool | True | Включить заполнение пустот |
+| `fill_method` | str | "laplace" | Метод интерполяции пустот (см. `holes.fill_voids`) |
+| `fill_passes` | int | 3 | Проходов заполнения |
+| `max_search_distance` | int | 100 | Радиус поиска для `fill_method="idw"`, px |
+| `edge_extrapolation_m` | float | 0.0 | Экстраполяция за границу данных, м |
+| `with_intensity` | bool | False | Дополнительный растр интенсивности (mean) |
+| `with_density` | bool | False | Дополнительный растр плотности (`nndistance`, mean) |
+| `save_classified_las` | bool | False | Сохранить облако с переклассифицированной растительностью |
+| `low_vegetation_max_m` | float | 0.5 | Верхняя граница класса 3 (подлесок), м |
+| `medium_vegetation_max_m` | float | 5.0 | Верхняя граница класса 4 (молодняк), м |
+
+Гидровыравнивание при заполнении пустот ЦМД не применяется: на растре высот над
+землёй вода и так близка к нулю.
+
+### Детекция вершин (`treetops`)
+
+`detect_tree_tops(chm, resolution_m, window_m, ...) -> TreeTops` — локальные
+максимумы полога; слипшиеся в плато ячейки одной вершины схлопываются в одну точку
+по центру масс.
+
+| Параметр | Тип | Default | Описание |
+|---|---|---|---|
+| `window_m` | float | — | Окно поиска вершин, м — радиус ядра до перевода в пиксели |
+| `min_height_m` | float | 0.5 | Минимальная высота дерева, м |
+| `max_height_m` | float | 60.0 | Верхняя отсечка высоты — выше считается шумом ЦМД, м |
+| `smooth_radius_px` | int | 1 | Радиус медианного сглаживания перед поиском, px |
+| `prepared` | bool | False | Растр уже прошёл `prepare_chm` |
+| `height_from_smoothed` | bool | False | Снимать высоту со сглаженного растра (поведение легаси) |
+
+Высота по умолчанию снимается с **несглаженного** растра: медианный фильтр срезает
+макушки и занижает высоту тем сильнее, чем острее крона (на синтетической кроне
+23 м сглаживание радиусом 1 px даёт 21.8 м). Сглаживание нужно, чтобы не ловить
+ложные вершины на шуме, но мерить по нему высоту значит занижать весь древостой.
+
+Вспомогательные: `window_radius_px(window_m, resolution_m)` — перевод окна в радиус
+в пикселях с округлением (усечение обнуляло бы окно, равное разрешению);
+`prepare_chm(chm, ...)` — сглаживание и отсечки; `to_world(tops, transform, offset)` —
+перевод вершин в СК; `split_by_height(heights, shrub_height_m=5.0)` — разделение на
+древостой и кустарник; `disc_kernel(radius_px)` — дисковое ядро.
+
+### Кроны (`crowns`)
+
+`delineate_crowns(chm, tops, min_height_m=0.5)` — водораздел по инвертированному
+пологу от маркеров-вершин; заливка ограничена маской полога, поэтому в просветы и
+на землю не уходит. Каждой вершине соответствует ровно одна зона.
+
+`crowns_to_polygons(labels, transform, resolution_m=1.0)` — векторизация меток;
+площадь считается по геометрии полигона за вычетом отверстий (просветы полога
+внутри кроны не заполняются). Крона из нескольких несвязных кусков даёт несколько
+полигонов с одним `tree_index`.
+
+`crown_areas_by_tree(labels, n_trees, resolution_m)` — площадь кроны на каждое
+дерево, м²; для вершин без кроны — 0.
+
+### Корректировка по АФС (`afs`) — необязательна
+
+**ЦМД, вершины и кроны считаются по одному только ВЛС.** АФС в расчёт не входит:
+`CHMBuilder` читает LAS, `detect_tree_tops` и `delineate_crowns` работают с массивом
+растра. Модуль `afs` — отдельный, вызывается по желанию; без него код идёт тем же
+путём. Сходимость 0.969× с эталоном получена именно так — прогон шёл с
+`AFS_CORRECTION = False`, ни один пиксель снимка в расчёт не попал.
+
+Минимальный сценарий «только ВЛС»:
+
+```python
+from sima_forest_cmd import (CHMBuilder, CHMConfig, read_chm,
+                             detect_tree_tops, delineate_crowns, crowns_to_polygons)
+
+result = CHMBuilder(output='out', crs='').build('cloud.las')
+chm, transform, res = read_chm(result.chm)
+tops = detect_tree_tops(chm, resolution_m=res, window_m=1.0)
+crowns = crowns_to_polygons(delineate_crowns(chm, tops), transform)
+```
+
+`crs=''` допустимо: параметр `override_srs` тогда не передаётся в PDAL и СК берётся
+из самого LAS. Задавать её явно нужно только если в облаке СК нет — снимок для
+этого не обязателен, подойдёт любой источник WKT.
+
+Когда снимок всё же есть, корректировка убирает ложные вершины и уточняет положение
+стволов. Съёмка ведётся в видимом диапазоне, канала ближнего ИК нет, поэтому NDVI
+неприменим и маска строится по RGB-индексам: `ExG` (2g − r − b по нормированным
+каналам) или `VARI`.
+
+| Функция | Назначение |
+|---|---|
+| `vegetation_index(rgb, method)` | Индекс: `method` — `"exg"` или `"vari"` |
+| `vegetation_mask(rgb, method, threshold, min_area_px)` | Маска растительности; `min_area_px` убирает мелкие пятна |
+| `resample_mask_to_grid(mask, shape)` | Приведение маски снимка к сетке ЦМД |
+| `correct_tops(rows, cols, veg_mask, resolution_m, ...)` | Отсев и уточнение вершин |
+
+`correct_tops` принимает `drop_non_vegetation` (отсев вершин вне растительности),
+`refine_position` (сдвиг к центру кроны) и `refine_radius_m` (максимальный сдвиг,
+по умолчанию 1.5 м; дальний сдвиг означает слитный полог, и положение по ЦМД
+надёжнее). Возвращает `TopsCorrection` со статистикой: сколько отсеяно, сколько
+сдвинуто и на сколько.
+
+### Диаметр ствола (`diameter`)
+
+`estimate_stem_diameter(heights, crown_areas_m2)` — **алгоритм не реализован**,
+возвращает NaN. Поле `diam` присутствует в выходных слоях сразу, чтобы схема
+shapefile не менялась при появлении расчёта.
+
+### Запись векторов (`vector_io`)
+
+`write_tree_points(xy, out_path, crs_wkt, attributes)` и
+`write_crown_polygons(polygons, out_path, crs_wkt, attributes)` — OGR-писатели
+с произвольным набором атрибутов. Имена полей обрезаются до 10 символов (предел
+DBF), NaN пишется как пустое значение.
+
+### Выходные артефакты
+
+| Артефакт | Формат | Содержание |
+|---|---|---|
+| ЦМД | GeoTIFF | Растр высот полога (max) |
+| Вершины деревьев | Shapefile `*_localMax.shp` | Точки: `hght`, `crown`, `diam` |
+| Древостой | Shapefile `*_treesWS.shp` | Полигоны крон высотой ≥ 5 м |
+| Кустарник | Shapefile `*_shrubsWS.shp` | Полигоны крон высотой < 5 м |
 
 ## Сервис рельефа (sima-relief-service)
 
@@ -433,9 +607,17 @@ Demo-датасет:
 
 ## Тесты
 
-100 тестов, 0 неудач: 92 unit + 8 интеграционных. Покрытие с `test_data/` — 80 %.
-Полностью покрыты `raster/holes.py` и `raster/hydro.py`. Слабое покрытие:
-`filters/outlier_filter.py` (43 %), `raster/vectorize.py` (54 %), `steps.py` (52 %).
+177 тестов, 0 неудач: 169 unit + 8 интеграционных. Покрытие с `test_data/` — 80 %.
+Полностью покрыты `raster/holes.py`, `raster/hydro.py` и модули `sima-forest-cmd`
+кроме `chm.py` (требует PDAL и реального облака — проверяется прогоном ноутбука).
+Слабое покрытие: `filters/outlier_filter.py` (43 %), `raster/vectorize.py` (54 %),
+`steps.py` (52 %).
+
+`test_treetops.py` фиксирует поведение детекции: округление окна вместо усечения,
+схлопывание плато в одну вершину, отсечки по высоте — и отдельно то, что на
+отдельно стоящих кронах грубая сетка деревьев **не теряет**, а крона мельче ячейки
+исчезает целиком. Слипание крон на грубой сетке синтетикой не воспроизводится,
+это эффект сомкнутого полога и измеряется на реальных данных в ноутбуке.
 
 `test_holes.py` отдельно фиксирует гарантии заполнения пустот: неизменность
 валидных ячеек при любом числе проходов и любом методе, отсутствие роста области
@@ -454,5 +636,6 @@ Demo-датасет:
 | scipy | gaussian_filter, binary_fill_holes, Delaunay |
 | numpy | Массивы |
 | opencv-python | cv2.blur (TPI box filter) |
+| scikit-image | Водораздел при сегментации крон (`segmentation.watershed`) |
 | shapely | Геометрия (crop AOI) |
 | pyproj | Координатные системы |

@@ -249,15 +249,25 @@ export default function Forest() {
                   algorithmicLabel="Алгоритмически (водораздел)"
                   aiHint="Границы сегментов крон определяет модель"
                 />
-                <Field label="Состояние вегетации">
-                  <Select
-                    value={p.detection.vegetation_state}
-                    onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
-                  >
-                    <option value="active">Активная</option>
-                    <option value="absent">Отсутствует</option>
-                  </Select>
-                </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Состояние вегетации">
+                    <Select
+                      value={p.detection.vegetation_state}
+                      onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
+                    >
+                      <option value="active">Активная</option>
+                      <option value="absent">Отсутствует</option>
+                    </Select>
+                  </Field>
+                  <Field label="Окно поиска вершин крон (м)" tooltip="Минимальное расстояние между соседними деревьями. Прямо определяет число найденных деревьев: чем шире окно, тем меньше вершин. Значение округляется до целого числа ячеек, поэтому фактическое окно зависит от разрешения ЦМД — при 1 м это 2.5 м на сетке 0.5 м и 3 м на сетке 1 м.">
+                    <NumberInput
+                      value={p.detection.peak_size_m}
+                      step={0.5}
+                      min={0}
+                      onChange={(v) => set('detection', { ...p.detection, peak_size_m: v })}
+                    />
+                  </Field>
+                </div>
                 {p.detection.mode === 'ai' && (
                   <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                     Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
