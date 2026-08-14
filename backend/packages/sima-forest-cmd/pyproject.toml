@@ -3,13 +3,14 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sima-dem-dsm"
+name = "sima-forest-cmd"
 version = "0.1.0"
-description = "СИМА — ЦММ: построение цифровой модели местности (DSM)"
+description = "СИМА — ЦМД: цифровая модель древостоя, детекция деревьев и сегментация крон"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.20",
-    "laspy>=2.0",
+    "scipy>=1.7",
+    "scikit-image>=0.19",
     "rasterio>=1.2",
     "gdal",
     "pdal",

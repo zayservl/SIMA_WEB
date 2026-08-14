@@ -35,7 +35,7 @@ export const defaultReliefParams: ReliefParams = {
 
 export const defaultForestParams: ForestParams = {
   cmd: { enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
-  detection: { enabled: true, mode: 'ai', vegetation_state: 'active' },
+  detection: { enabled: true, mode: 'ai', vegetation_state: 'active', peak_size_m: 1 },
   stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'] },
   logging_category: {
     enabled: true,
