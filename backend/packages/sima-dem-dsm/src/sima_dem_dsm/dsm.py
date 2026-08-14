@@ -30,10 +30,16 @@ class DSMConfig:
     fill_holes: bool = True
     max_search_distance: int = 100
     smoothing_iterations: int = 0
+    # Метод интерполяции пустот: "laplace" (гладко) или "idw" (GDALFillNodata,
+    # даёт радиальные лучи внутрь крупных пустот). См. holes.fill_voids.
+    fill_method: str = "laplace"
     # Проходов заполнения пустот. Водоём, сообщавшийся с внешней пустотой,
     # замыкается только после заполнения перемычки — за один проход он остаётся
-    # дырой. 1 — историческое однопроходное поведение. См. holes.fill_voids.
+    # дырой. 1 — историческое однопроходное поведение.
     fill_passes: int = 3
+    # Пустоты-водоёмы получают плоскую отметку вместо интерполяции (3DEP
+    # hydro-flattening). См. sima_dem_core.raster.hydro.
+    hydro_flatten: bool = True
     # Допустимая экстраполяция за границу валидной области, м (0 — только
     # внутренние дыры). См. sima_dem_core.raster.holes.
     edge_extrapolation_m: float = 5.0
@@ -50,6 +56,7 @@ class DSMBuilder:
         aoi: Optional[str] = None,
     ) -> None:
         self.raster: list[str] = []
+        self.water_levels: list[float] = []   # отметки гидровыравненных водоёмов, м
         self.aoi = aoi
         self.output_folder = str(output)
         self.crs = crs
@@ -102,18 +109,21 @@ class DSMBuilder:
         if nodata is None:
             return
 
-        valid = mask == 255
-        arr, filled = fill_voids(
-            arr, valid,
+        result = fill_voids(
+            arr, mask == 255,
+            method=cfg.fill_method,
             max_search_distance=cfg.max_search_distance,
             smoothing_iterations=cfg.smoothing_iterations,
             max_extrapolation_px=px_from_metres(cfg.edge_extrapolation_m, cfg.resolution),
-            max_passes=cfg.fill_passes)
-        if not np.any(filled):
+            max_passes=cfg.fill_passes,
+            resolution_m=cfg.resolution,
+            hydro_flatten=cfg.hydro_flatten)
+        if not np.any(result.filled):
             return
+        self.water_levels = result.water_levels
 
         with rasterio.open(raster, "w", **profile) as dest:
-            dest.write_band(1, arr)
+            dest.write_band(1, result.array)
 
     def _set_projection(self, raster: str, crs_wkt: Optional[str]) -> None:
         if raster is None or crs_wkt is None:
