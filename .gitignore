@@ -36,6 +36,14 @@ backend/.coverage
 backend/output/
 backend/output_relief_demo/
 
+# Ключи доступа к S3 (в репозиторий не кладём)
+backend/.s3_credentials.json
+
+# Рабочие каталоги S3-бенчмарков: скачанные LAS и артефакты тайлов
+backend/benchmarks/results_*/_work/
+backend/benchmarks/results_*/_las_cache/
+backend/benchmarks/results_*/previews/
+
 # Внутренние материалы (не публиковать)
 Архитектурная концепция.pdf
 Концептуализация работ на Q3 202.pdf

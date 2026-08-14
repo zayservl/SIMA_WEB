@@ -10,9 +10,8 @@ from __future__ import annotations
 import rasterio
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from rasterio.fill import fillnodata
 
-from .holes import fillable_mask
+from .holes import fill_voids
 
 
 def gauss_smooth(
@@ -24,6 +23,8 @@ def gauss_smooth(
     fill_holes: bool = False,
     max_search_distance: int = 100,
     max_extrapolation_px: float = 0.0,
+    fill_passes: int = 3,
+    fill_method: str = "laplace",
 ) -> None:
     with rasterio.open(raster) as src:
         profile = src.profile
@@ -34,15 +35,16 @@ def gauss_smooth(
     valid_mask = mask == 255
 
     if fill_holes and nodata is not None:
-        holes = fillable_mask(valid_mask, max_extrapolation_px)
-        if np.any(holes):
-            filled = fillnodata(
-                array.copy(), mask=mask,
-                max_search_distance=max_search_distance,
-                smoothing_iterations=0,
-            )
-            array = np.where(holes, filled, array)
-            valid_mask = valid_mask | holes
+        result = fill_voids(
+            array, valid_mask,
+            method=fill_method,
+            max_search_distance=max_search_distance,
+            smoothing_iterations=0,
+            max_extrapolation_px=max_extrapolation_px,
+            max_passes=fill_passes,
+        )
+        array = result.array
+        valid_mask = valid_mask | result.filled
 
     fill_val = np.median(array[valid_mask]) if np.any(valid_mask) else 0.0
     work = np.where(valid_mask, array, fill_val)

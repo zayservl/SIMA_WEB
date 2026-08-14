@@ -16,11 +16,10 @@ from typing import Optional
 import pdal
 import rasterio
 import numpy as np
-from rasterio.fill import fillnodata
 from osgeo import gdal
 
 from sima_dem_core.check_classification import CheckClassification
-from sima_dem_core.raster.holes import fillable_mask, px_from_metres
+from sima_dem_core.raster.holes import fill_voids, px_from_metres
 
 
 @dataclass
@@ -51,6 +50,14 @@ class FillConfig:
     max_search_distance: int = 100
     smoothing_iterations: int = 0
     fallback_to_min_z: bool = True
+    # Метод интерполяции пустот: "laplace" (гладко) или "idw" (GDALFillNodata,
+    # даёт радиальные лучи внутрь крупных пустот).
+    fill_method: str = "laplace"
+    # Проходов заполнения пустот; 1 — историческое однопроходное поведение.
+    fill_passes: int = 3
+    # Пустоты-водоёмы получают плоскую отметку вместо интерполяции (3DEP
+    # hydro-flattening). См. sima_dem_core.raster.hydro.
+    hydro_flatten: bool = True
     # Насколько (в метрах) допустимо экстраполировать за границу валидной
     # области. 0 — только внутренние дыры, как было исторически; такое
     # поведение выбрасывало все пустоты, касающиеся рамки растра, даже
@@ -104,6 +111,7 @@ class GroundProcessing:
         """Инициализация параметров обработки точек в ЦМР."""
         self.raster: list[str] = []
         self.classified_ground: Optional[str] = None
+        self.water_levels: list[float] = []   # отметки гидровыравненных водоёмов, м
         self.aoi = aoi
         self.output_folder = str(output)
         self.resolution = resolution
@@ -273,7 +281,9 @@ class GroundProcessing:
         """Интерполирует пустоты растра через fillnodata.
 
         Заполняются внутренние дыры и, если задан `fill.edge_extrapolation_m`,
-        пустоты не далее этого расстояния от валидных данных.
+        пустоты не далее этого расстояния от валидных данных. Проходов —
+        `fill.fill_passes`: часть пустот замыкается в дыру только после
+        заполнения соседних (см. sima_dem_core.raster.holes.fill_voids).
         """
         with rasterio.open(raster) as src:
             profile = src.profile
@@ -284,21 +294,23 @@ class GroundProcessing:
         if nodata is None:
             return
 
-        valid = mask == 255
-        holes = fillable_mask(
-            valid, px_from_metres(self.fill.edge_extrapolation_m, self.resolution))
-        if not np.any(holes):
-            return
-
-        arr_filled = fillnodata(
-            arr.copy(), mask=mask,
+        result = fill_voids(
+            arr, mask == 255,
+            method=self.fill.fill_method,
             max_search_distance=self.fill.max_search_distance,
             smoothing_iterations=self.fill.smoothing_iterations,
+            max_extrapolation_px=px_from_metres(
+                self.fill.edge_extrapolation_m, self.resolution),
+            max_passes=self.fill.fill_passes,
+            resolution_m=self.resolution,
+            hydro_flatten=self.fill.hydro_flatten,
         )
-        arr = np.where(holes, arr_filled, arr)
+        if not np.any(result.filled):
+            return
+        self.water_levels = result.water_levels
 
         with rasterio.open(raster, "w", **profile) as dest:
-            dest.write_band(1, arr)
+            dest.write_band(1, result.array)
 
     def _get_raster_name(self, path: str, out_path: Optional[str]) -> tuple[str, str]:
         """Формирует пути выходного растра ЦМР и сглаженного растра."""
