@@ -120,27 +120,62 @@ def vegetation_mask(
     )
 
 
-def resample_mask_to_grid(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    """Привести маску снимка к сетке ЦМД ближайшим соседом.
+def resample_to_grid(
+    array: np.ndarray,
+    shape: tuple[int, int],
+    how: str = "nearest",
+) -> np.ndarray:
+    """Привести растр снимка к сетке ЦМД.
 
-    Снимок обычно на порядок подробнее ЦМД (0.07 м против 0.5 м), поэтому
-    приведение всегда идёт с прореживанием.
+    Снимок на порядок подробнее ЦМД (0.07 м против 0.5 м), поэтому приведение
+    всегда идёт с прореживанием — примерно 50 пикселей снимка на ячейку ЦМД.
 
     Args:
-        mask: булева маска в сетке снимка.
+        array: растр в сетке снимка.
         shape: (rows, cols) целевой сетки.
+        how: `"nearest"` — брать значение центральной ячейки; `"mean"` — среднее
+            по всем накрытым ячейкам. Для непрерывных величин вроде карты границ
+            нужен `"mean"`: ближайший сосед выбрасывает 98 % пикселей, а вместе
+            с ними и сам сигнал границы, попавший между узлами сетки.
 
     Returns:
-        Булева маска формы `shape`.
+        Растр формы `shape`.
     """
-    mask = np.asarray(mask, dtype=bool)
-    if mask.shape == tuple(shape):
-        return mask
-    rows = np.clip((np.arange(shape[0]) + 0.5) * mask.shape[0] / shape[0],
-                   0, mask.shape[0] - 1).astype(int)
-    cols = np.clip((np.arange(shape[1]) + 0.5) * mask.shape[1] / shape[1],
-                   0, mask.shape[1] - 1).astype(int)
-    return mask[np.ix_(rows, cols)]
+    array = np.asarray(array)
+    if array.shape[:2] == tuple(shape):
+        return array
+    if how == "nearest":
+        rows = np.clip((np.arange(shape[0]) + 0.5) * array.shape[0] / shape[0],
+                       0, array.shape[0] - 1).astype(int)
+        cols = np.clip((np.arange(shape[1]) + 0.5) * array.shape[1] / shape[1],
+                       0, array.shape[1] - 1).astype(int)
+        return array[np.ix_(rows, cols)]
+    if how != "mean":
+        raise ValueError(f"Неизвестный способ приведения: {how!r}; ожидается 'nearest' или 'mean'")
+
+    # Среднее по накрытым ячейкам: суммируем по группам строк, затем столбцов.
+    work = np.asarray(array, dtype=float)
+    row_of = np.clip((np.arange(work.shape[0]) * shape[0]) // work.shape[0],
+                     0, shape[0] - 1)
+    col_of = np.clip((np.arange(work.shape[1]) * shape[1]) // work.shape[1],
+                     0, shape[1] - 1)
+    by_rows = np.zeros((shape[0], work.shape[1]), dtype=float)
+    np.add.at(by_rows, row_of, work)
+    counts_r = np.bincount(row_of, minlength=shape[0]).astype(float)
+    by_rows /= np.maximum(counts_r, 1)[:, None]
+    out = np.zeros(shape, dtype=float)
+    np.add.at(out.T, col_of, by_rows.T)
+    counts_c = np.bincount(col_of, minlength=shape[1]).astype(float)
+    return out / np.maximum(counts_c, 1)[None, :]
+
+
+def resample_mask_to_grid(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Привести булеву маску снимка к сетке ЦМД ближайшим соседом.
+
+    Обёртка над `resample_to_grid` — сохранена как самостоятельное имя, потому
+    что для маски осмысленен только режим `"nearest"`.
+    """
+    return resample_to_grid(np.asarray(mask, dtype=bool), shape, how="nearest")
 
 
 def correct_tops(
