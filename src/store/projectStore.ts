@@ -14,7 +14,13 @@ export const defaultReliefParams: ReliefParams = {
   smoothing_preset: 'medium',
   output_resolution_preset: 'native',
   output_resolution_m: 1,
-  dsm: { enabled: true, output_type: 'max', interpolate: true, fill_holes: true, max_search_distance: 100, edge_extrapolation_m: 5 },
+  // Растеризация ЦМР: idw — умолчание RasterOutputConfig в sima-dem-ground.
+  dtm: { output_type: 'idw' },
+  dsm: {
+    enabled: true, output_type: 'max', interpolate: true, fill_holes: true,
+    max_search_distance: 100, edge_extrapolation_m: 5,
+    fill_method: 'laplace', fill_passes: 3, hydro_flatten: true,
+  },
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
@@ -22,6 +28,7 @@ export const defaultReliefParams: ReliefParams = {
     // interpolation/inter_amp управляют заполнением пустот ЦМР (step_dtm →
     // FillConfig): значения выровнены с DerivativesParams бэкенда (True/100).
     interpolation: true, inter_amp: 100, edge_extrapolation_m: 5,
+    fill_method: 'laplace', fill_passes: 3, hydro_flatten: true,
     // Уклоны и экспозиции интерполируются независимо от ЦМР — по умолчанию
     // повторяют её настройки.
     slopes_interpolation: true, slopes_inter_amp: 100, slopes_edge_extrapolation_m: 5,
@@ -34,9 +41,32 @@ export const defaultReliefParams: ReliefParams = {
 }
 
 export const defaultForestParams: ForestParams = {
-  cmd: { enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5, channels: { chm: true }, median_window: 3 },
-  detection: { enabled: true, mode: 'ai', vegetation_state: 'active', peak_size_m: 1 },
-  stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'] },
+  // Пороги ярусов и заполнение пустот полога — умолчания CHMConfig бэкенда
+  // (низкая растительность ≤0.5 м, средняя ≤5 м; экстраполяция края 0 —
+  // за границей полога досчитывать нечего).
+  cmd: {
+    enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5,
+    channels: { chm: true, intensity: false, density: false },
+    median_window: 3, save_classified_las: false,
+    fill: {
+      interpolate: true, fill_holes: true, fill_method: 'laplace', fill_passes: 3,
+      max_search_distance: 100, edge_extrapolation_m: 0,
+    },
+  },
+  detection: {
+    enabled: true, mode: 'ai', vegetation_state: 'active', peak_size_m: 1,
+    min_height_m: 0.5, max_height_m: 60, smooth_radius_px: 1,
+    afs_correction: {
+      enabled: false, index: 'exg', threshold: 0.05, min_area_px: 0,
+      drop_non_vegetation: true, refine_position: true, refine_radius_m: 1.5,
+    },
+    // Нули у всех слагаемых кроме height — заливка только по высоте полога.
+    cost_weights: {
+      height: 1, chm_gradient: 0, afs_edges: 0, afs_texture: 0,
+      intensity: 0, density: 0, texture_window: 3,
+    },
+  },
+  stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'], height_trim: 0.05 },
   logging_category: {
     enabled: true,
     algorithm: 'threshold',

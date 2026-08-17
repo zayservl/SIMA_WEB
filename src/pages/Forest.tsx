@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode } from '@/api/types'
+import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod } from '@/api/types'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
@@ -40,8 +40,12 @@ function withDefaults(fp?: ForestParams): ForestParams {
   const d = defaultForestParams
   return {
     ...d, ...fp,
-    cmd: { ...d.cmd, ...fp.cmd },
-    detection: { ...d.detection, ...fp.detection },
+    cmd: { ...d.cmd, ...fp.cmd, channels: { ...d.cmd.channels, ...fp.cmd?.channels }, fill: { ...d.cmd.fill, ...fp.cmd?.fill } },
+    detection: {
+      ...d.detection, ...fp.detection,
+      afs_correction: { ...d.detection.afs_correction, ...fp.detection?.afs_correction },
+      cost_weights: { ...d.detection.cost_weights, ...fp.detection?.cost_weights },
+    },
     stats: { ...d.stats, ...fp.stats },
     smoothing: { ...d.smoothing, ...fp.smoothing },
     logging_category: { ...d.logging_category, ...fp.logging_category },
@@ -212,8 +216,49 @@ export default function Forest() {
                     </Field>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-4">
-                  <Checkbox checked={p.cmd.channels.chm} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, chm: v } })} label="CHM (высота крон)" />
+                <div>
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Каналы растра</span>
+                    <InfoHint text="Дополнительные растры того же покрытия, что и ЦМД: интенсивность отражения (its.tif) и плотность точек (den.tif). Оба — вход поверхности стоимости при сегментации крон." />
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    <Checkbox checked={p.cmd.channels.chm} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, chm: v } })} label="CHM (высота крон)" />
+                    <Checkbox checked={p.cmd.channels.intensity} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, intensity: v } })} label="Интенсивность (ITS)" />
+                    <Checkbox checked={p.cmd.channels.density} onChange={(v) => set('cmd', { ...p.cmd, channels: { ...p.cmd.channels, density: v } })} label="Плотность точек (DEN)" />
+                    <Checkbox checked={p.cmd.save_classified_las} onChange={(v) => set('cmd', { ...p.cmd, save_classified_las: v })} label="Сохранять классифицированное облако" />
+                  </div>
+                </div>
+
+                {/* Заполнение пустот полога */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Заполнение пустот полога</span>
+                    <InfoHint text="Гидровыравнивание к ЦМД не применяется: на растре высот над землёй вода и так близка к нулю." />
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    <Checkbox checked={p.cmd.fill.interpolate} onChange={(v) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, interpolate: v } })} label="Интерполяция" />
+                    <Checkbox checked={p.cmd.fill.fill_holes} onChange={(v) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, fill_holes: v } })} label="Заполнять пустоты" />
+                  </div>
+                  <div className={`mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 ${p.cmd.fill.interpolate && p.cmd.fill.fill_holes ? '' : 'opacity-40 pointer-events-none'}`}>
+                    <Field label="Метод" tooltip="laplace — гладкое решение уравнения Лапласа в пустоте; idw — GDALFillNodata, быстрее, но с радиальными лучами внутрь крупных пустот.">
+                      <Select
+                        value={p.cmd.fill.fill_method}
+                        onChange={(e) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, fill_method: e.target.value as VoidFillMethod } })}
+                      >
+                        <option value="laplace">laplace</option>
+                        <option value="idw">idw</option>
+                      </Select>
+                    </Field>
+                    <Field label="Проходов">
+                      <NumberInput value={p.cmd.fill.fill_passes} min={1} onChange={(v) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, fill_passes: v } })} />
+                    </Field>
+                    <Field label="Радиус поиска, пикс">
+                      <NumberInput value={p.cmd.fill.max_search_distance} min={0} onChange={(v) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, max_search_distance: v } })} />
+                    </Field>
+                    <Field label="Экстраполяция края, м" tooltip="0 — заполнять только внутренние просветы полога, не выходя за границу данных.">
+                      <NumberInput value={p.cmd.fill.edge_extrapolation_m} step={0.5} min={0} onChange={(v) => set('cmd', { ...p.cmd, fill: { ...p.cmd.fill, edge_extrapolation_m: v } })} />
+                    </Field>
+                  </div>
                 </div>
               </div>
             </div>
@@ -268,6 +313,93 @@ export default function Forest() {
                     />
                   </Field>
                 </div>
+                {/* Отсечки высоты и сглаживание ЦМД перед поиском максимумов */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Отсечки высоты</span>
+                    <InfoHint text="Ячейки ЦМД вне диапазона обнуляются до поиска вершин: ниже нижней отсечки — не дерево, выше верхней — шум растра." />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <Field label="Минимальная высота, м">
+                      <NumberInput value={p.detection.min_height_m} step={0.1} min={0} onChange={(v) => set('detection', { ...p.detection, min_height_m: v })} />
+                    </Field>
+                    <Field label="Максимальная высота, м">
+                      <NumberInput value={p.detection.max_height_m} step={1} min={0} onChange={(v) => set('detection', { ...p.detection, max_height_m: v })} />
+                    </Field>
+                    <Field label="Сглаживание, пикс" tooltip="Радиус медианного ядра, которым ЦМД сглаживается перед поиском максимумов. 0 — без сглаживания. Высота дерева при этом снимается с несглаженного растра: медианный фильтр срезает макушки.">
+                      <NumberInput value={p.detection.smooth_radius_px} min={0} onChange={(v) => set('detection', { ...p.detection, smooth_radius_px: v })} />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Корректировка вершин по АФС */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox
+                      checked={p.detection.afs_correction.enabled}
+                      onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, enabled: v } })}
+                      label="Корректировка вершин по снимку"
+                    />
+                    <InfoHint text="ЦМД не отличает дерево от столба или бровки отвала. Снимок различает их по цвету: вершина вне маски растительности отбрасывается, положение вершины уточняется по центру области кроны. Съёмка в видимом диапазоне, канала ближнего ИК нет — поэтому индексы по RGB, а не NDVI." />
+                  </span>
+                  <div className={`mt-3 space-y-3 ${p.detection.afs_correction.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <Field label="Индекс" tooltip="ExG = 2g − r − b по нормированным каналам — устойчив к яркости. VARI сильнее реагирует на слабую зелень, но шумит на тенях и пересветах.">
+                        <Select
+                          value={p.detection.afs_correction.index}
+                          onChange={(e) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, index: e.target.value as 'exg' | 'vari' } })}
+                        >
+                          <option value="exg">ExG</option>
+                          <option value="vari">VARI</option>
+                        </Select>
+                      </Field>
+                      <Field label="Порог индекса">
+                        <NumberInput value={p.detection.afs_correction.threshold} step={0.01} onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, threshold: v } })} />
+                      </Field>
+                      <Field label="Мин. пятно, пикс" tooltip="Связные области растительности мельче этой площади выбрасываются из маски. 0 — не отсеивать.">
+                        <NumberInput value={p.detection.afs_correction.min_area_px} min={0} onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, min_area_px: v } })} />
+                      </Field>
+                      <Field label="Радиус уточнения, м" tooltip="Максимальный сдвиг вершины к центру области кроны. Дальний сдвиг означает слитный полог, а не отдельную крону — там исходное положение по ЦМД надёжнее.">
+                        <NumberInput value={p.detection.afs_correction.refine_radius_m} step={0.5} min={0} onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, refine_radius_m: v } })} />
+                      </Field>
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                      <Checkbox checked={p.detection.afs_correction.drop_non_vegetation} onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, drop_non_vegetation: v } })} label="Отсеивать вершины вне растительности" />
+                      <Checkbox checked={p.detection.afs_correction.refine_position} onChange={(v) => set('detection', { ...p.detection, afs_correction: { ...p.detection.afs_correction, refine_position: v } })} label="Уточнять положение вершин" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Поверхность стоимости водораздела */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Границы крон: веса признаков</span>
+                    <InfoHint text="По каким признакам водораздел проводит границу между соседними кронами. Число крон от весов не зависит — оно равно числу вершин; веса меняют только положение границ. Все веса, кроме «высоты», равные нулю — заливка только по высоте полога." />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {([
+                      ['height', 'Высота полога'],
+                      ['chm_gradient', 'Перепад ЦМД'],
+                      ['afs_edges', 'Границы снимка'],
+                      ['afs_texture', 'Текстура снимка'],
+                      ['intensity', 'Интенсивность'],
+                      ['density', 'Плотность точек'],
+                    ] as const).map(([key, label]) => (
+                      <Field key={key} label={label}>
+                        <NumberInput
+                          value={p.detection.cost_weights[key]}
+                          step={0.1}
+                          min={0}
+                          onChange={(v) => set('detection', { ...p.detection, cost_weights: { ...p.detection.cost_weights, [key]: v } })}
+                        />
+                      </Field>
+                    ))}
+                    <Field label="Окно текстуры, пикс" tooltip="Размер окна локального СКО, которым считаются текстурные границы снимка.">
+                      <NumberInput value={p.detection.cost_weights.texture_window} min={1} onChange={(v) => set('detection', { ...p.detection, cost_weights: { ...p.detection.cost_weights, texture_window: v } })} />
+                    </Field>
+                  </div>
+                </div>
+
                 {p.detection.mode === 'ai' && (
                   <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                     Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
@@ -302,12 +434,20 @@ export default function Forest() {
                     />
                   </Field>
                 </div>
-                <div>
-                  <span className="label-base">Шаг VCI, м</span>
-                  <div className="mt-1.5 flex gap-5">
-                    <Radio checked={p.stats.vci_step === 1} onChange={() => set('stats', { ...p.stats, vci_step: 1 })} label="1.0" />
-                    <Radio checked={p.stats.vci_step === 0.5} onChange={() => set('stats', { ...p.stats, vci_step: 0.5 })} label="0.5" />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <span className="label-base">Шаг VCI, м</span>
+                    <div className="mt-1.5 flex gap-5">
+                      <Radio checked={p.stats.vci_step === 1} onChange={() => set('stats', { ...p.stats, vci_step: 1 })} label="1.0" />
+                      <Radio checked={p.stats.vci_step === 0.5} onChange={() => set('stats', { ...p.stats, vci_step: 0.5 })} label="0.5" />
+                    </div>
                   </div>
+                  <Field
+                    label="Отсечка при устойчивой высоте"
+                    tooltip="Доля самых высоких ячеек кроны, отбрасываемых при расчёте height_robust_m. Защищает высоту дерева от одиночного выброса ЦМД."
+                  >
+                    <NumberInput value={p.stats.height_trim} step={0.01} min={0} max={0.5} onChange={(v) => set('stats', { ...p.stats, height_trim: v })} className="w-28" />
+                  </Field>
                 </div>
               </div>
             </div>
