@@ -31,6 +31,9 @@ class SMRFConfig:
     threshold: float = 0.45
     scalar: float = 1.2
     returns: list = field(default_factory=lambda: ["first", "last", "intermediate", "only"])
+    # Порог SMRF в cut-режиме: единственный параметр, который легаси задавало
+    # в упрощённом варианте (`cut_smrf`), остальные брались по умолчанию PDAL.
+    cut_threshold: float = 3.0
 
     def to_dict(self) -> dict:
         """Словарь параметров для filters.smrf в полном режиме."""
@@ -39,7 +42,7 @@ class SMRFConfig:
 
     def to_cut_dict(self) -> dict:
         """Словарь параметров для filters.smrf в cut-режиме."""
-        return {"type": "filters.smrf", "threshold": 3, "returns": self.returns}
+        return {"type": "filters.smrf", "threshold": self.cut_threshold, "returns": self.returns}
 
 
 @dataclass
@@ -80,8 +83,18 @@ def _fix_returns_stage() -> dict:
         "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]}
 
 
-def _elm_outlier_stages() -> list[dict]:
-    return [{"type": "filters.elm"}, {"type": "filters.outlier"}]
+def _elm_outlier_stages(elm: bool = True, outlier: bool = True) -> list[dict]:
+    """Стадии отсева шума перед классификацией земли.
+
+    Оба фильтра отключаемы: контракт (`SmrfParams.elm` / `SmrfParams.outlier`)
+    даёт их как самостоятельные флаги.
+    """
+    stages: list[dict] = []
+    if elm:
+        stages.append({"type": "filters.elm"})
+    if outlier:
+        stages.append({"type": "filters.outlier"})
+    return stages
 
 
 def _writers_gdal_stage(filename: str, cfg: RasterOutputConfig, resolution: float) -> dict:
@@ -107,6 +120,8 @@ class GroundProcessing:
         smrf: Optional[SMRFConfig] = None,
         fill: Optional[FillConfig] = None,
         raster_out: Optional[RasterOutputConfig] = None,
+        elm: bool = True,
+        outlier: bool = True,
     ) -> None:
         """Инициализация параметров обработки точек в ЦМР."""
         self.raster: list[str] = []
@@ -120,6 +135,8 @@ class GroundProcessing:
         self.is_CRS_EPSG = is_CRS_EPSG if is_CRS_EPSG is not None else self._detect_crs_is_epsg(crs)
         self.cut_smrf = cut_smrf
         self.save_ground_las = save_ground_las
+        self.elm = elm
+        self.outlier = outlier
         self.smrf = smrf or SMRFConfig()
         self.fill = fill or FillConfig(max_search_distance=interpol_dist)
         self.raster_out = raster_out or RasterOutputConfig()
@@ -158,7 +175,7 @@ class GroundProcessing:
             {"type": "filters.assign", "assignment": "Classification[:]=0"},
         ]
         pipeline += self._maybe_crop_stage()
-        pipeline += _elm_outlier_stages()
+        pipeline += _elm_outlier_stages(self.elm, self.outlier)
         pipeline.append(smrf_stage)
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
@@ -181,7 +198,7 @@ class GroundProcessing:
         pipeline += self._maybe_crop_stage()
         # elm/outlier должны отработать до финального range-отбора Classification==2,
         # иначе точки, помеченные ими как шум (класс 7), не отсеиваются перед растеризацией.
-        pipeline += _elm_outlier_stages()
+        pipeline += _elm_outlier_stages(self.elm, self.outlier)
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
         pipeline.append(_writers_gdal_stage(raster, self.raster_out, self.resolution))
@@ -196,7 +213,7 @@ class GroundProcessing:
         ]
         pipeline += self._maybe_crop_stage()
         if not check.is_ground:
-            pipeline += _elm_outlier_stages()
+            pipeline += _elm_outlier_stages(self.elm, self.outlier)
             pipeline.append(self.smrf.to_cut_dict() if self.cut_smrf else self.smrf.to_dict())
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
         pipeline.append({"type": "filters.sample", "radius": self.resolution})

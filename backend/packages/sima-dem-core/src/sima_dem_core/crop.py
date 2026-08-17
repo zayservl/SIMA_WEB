@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+import json
+
 import laspy
 import numpy as np
 from shapely.geometry import Point, shape
-import json
 
 
 class Crop:
@@ -34,22 +35,11 @@ class Crop:
         las = laspy.read(self.vls_path)
         x = np.asarray(las.x)
         y = np.asarray(las.y)
-        z = np.asarray(las.z)
-        intensity = np.asarray(las.intensity)
-        r = np.asarray(las.red) if hasattr(las, "red") else np.zeros(len(x), dtype=np.uint16)
-        g = np.asarray(las.green) if hasattr(las, "green") else np.zeros(len(x), dtype=np.uint16)
-        b = np.asarray(las.blue) if hasattr(las, "blue") else np.zeros(len(x), dtype=np.uint16)
-        cls = np.asarray(las.classification)
 
         aoi = self._load_aoi()
 
-        # Векторизованная проверка: точки внутри полигона
-        pts = np.column_stack([x, y])
-        from shapely import STRtree
-        from shapely.geometry import Point
-        points = [Point(p) for p in pts]
-        tree = STRtree(points)
-        # Простая проверка: для каждой точки — inside polygon
+        # Точки внутри полигона AOI
+        points = [Point(p) for p in np.column_stack([x, y])]
         mask = np.array([aoi.contains(p) for p in points], dtype=bool)
 
         if np.any(mask):

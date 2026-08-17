@@ -56,13 +56,17 @@ def step_crop(las_path: str, aoi: Optional[str], out_dir: str) -> str:
 
 # --- 2. Filter ----------------------------------------------------------
 
-def step_filter(las_path: str, params: ReliefParams, out_dir: str) -> str:
-    """Применить фильтр LAS (manual/stat/range/outlier/smrf-пропуск)."""
+def step_filter(las_path: str, params: ReliefParams, out_dir: str, resolution: float = 1.0) -> str:
+    """Применить фильтр LAS (manual/stat/range/outlier/smrf-пропуск).
+
+    `resolution` конструкторы фильтров принимают ради единой сигнатуры с легаси;
+    сам отбор точек от него не зависит, поэтому передаём разрешение расчёта.
+    """
     if params.filter_method in (None, "smrf"):
         return las_path  # SMRF выполняется внутри ground-классификации
     out_path = os.path.join(out_dir, _stem(las_path) + "_filtered.las")
     kw = filter_kwargs(params)
-    res = 1.0  # разрешение фильтра — не критично, используется ядром
+    res = resolution
     m = params.filter_method
     if m == "manual":
         ManualFilter(las_path, res, kw["z_min"], kw["z_max"], out_path).filter()
@@ -107,11 +111,16 @@ def step_dtm(
         save_ground_las=save_ground_las,
         smrf=smrf_cfg,
         cut_smrf=params.smrf.cut_smrf,
+        elm=params.smrf.elm,
+        outlier=params.smrf.outlier,
         fill=FillConfig(fill_holes=params.derivatives.interpolation,
                          max_search_distance=params.derivatives.inter_amp,
                          fallback_to_min_z=True,
-                         edge_extrapolation_m=params.derivatives.edge_extrapolation_m),
-        raster_out=RasterOutputConfig(output_type="idw"),
+                         edge_extrapolation_m=params.derivatives.edge_extrapolation_m,
+                         fill_method=params.derivatives.fill_method,
+                         fill_passes=params.derivatives.fill_passes,
+                         hydro_flatten=params.derivatives.hydro_flatten),
+        raster_out=RasterOutputConfig(output_type=params.dtm.output_type),
     )
     gp.get_raster(las_path, crs_wkt=crs, out_path=ground_las)
     dtm_path = gp.raster[-1] if gp.raster else os.path.join(out_dir, stem + "_dem.tif")
@@ -141,6 +150,9 @@ def step_dsm(
         fill_holes=params.dsm.fill_holes,
         max_search_distance=params.dsm.max_search_distance,
         edge_extrapolation_m=params.dsm.edge_extrapolation_m,
+        fill_method=params.dsm.fill_method,
+        fill_passes=params.dsm.fill_passes,
+        hydro_flatten=params.dsm.hydro_flatten,
     )
     builder = DSMBuilder(output=out_dir, crs=crs, config=cfg)
     dsm_path = builder.build(las_path, crs_wkt=crs, out_path=out_path)
@@ -164,6 +176,8 @@ def step_smooth(dtm_path: str, params: ReliefParams, out_dir: str, resolution: f
         max_search_distance=params.derivatives.inter_amp,
         max_extrapolation_px=px_from_metres(
             params.derivatives.edge_extrapolation_m, resolution),
+        fill_passes=params.derivatives.fill_passes,
+        fill_method=params.derivatives.fill_method,
     )
     return out_path
 
@@ -188,7 +202,8 @@ def step_aspect(base_raster: str, crs: str, out_dir: str, res: float) -> str:
 def step_tpi(base_raster: str, params: ReliefParams, out_dir: str, crs: str, resolution: float) -> str:
     return calculate_tpi(
         dem_path=base_raster, crs=crs, output_folder=out_dir,
-        input_res=resolution, res=10.0, config=map_tpi_config(params.derivatives),
+        input_res=resolution, res=params.derivatives.tpi_res,
+        config=map_tpi_config(params.derivatives),
     )
 
 

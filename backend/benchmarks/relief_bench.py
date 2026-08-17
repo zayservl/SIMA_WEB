@@ -21,7 +21,10 @@
 а не независимую точность съёмки. Это ограничение исходных данных, не харнесса.
 
 CLI:
-    python benchmarks/relief_bench.py --limit 5 --out benchmarks/results
+    python benchmarks/relief_bench.py --root <путь к датасету> --limit 5 --out benchmarks/results
+
+Путь к датасету берётся из `--root`, иначе из переменной окружения
+`SIMA_DSM_DATASET`, иначе из `test_data/dsm_dataset` рядом с репозиторием.
 """
 
 from __future__ import annotations
@@ -73,6 +76,11 @@ from sima_relief_service import (  # noqa: E402
     assess_materials,
 )
 from sima_relief_service import steps as S  # noqa: E402
+
+# Датасет триплетов: явный --root → переменная окружения → каталог рядом с
+# репозиторием (backend/../../test_data/dsm_dataset).
+DEFAULT_DATASET_ROOT = os.environ.get(
+    "SIMA_DSM_DATASET", str(BACKEND.parent.parent / "test_data" / "dsm_dataset"))
 
 # Порядок шагов конвейера — для стабильных колонок в таблицах времени.
 STEP_ORDER = [
@@ -440,7 +448,7 @@ def load_results(path: str) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--root", default="/Users/sergeyzay/Documents/НЕДРА/СИМА/test_data/dsm_dataset")
+    ap.add_argument("--root", default=DEFAULT_DATASET_ROOT)
     ap.add_argument("--out", default=str(BACKEND / "benchmarks" / "results"))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--offset", type=int, default=0)

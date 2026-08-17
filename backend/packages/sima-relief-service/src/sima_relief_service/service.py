@@ -147,7 +147,7 @@ class ReliefService:
         # 1. crop
         las = self._step(tile, "crop", lambda: S.step_crop(las, tile_in.aoi, out_dir))
         # 2. filter
-        las = self._step(tile, "filter", lambda: S.step_filter(las, params, out_dir))
+        las = self._step(tile, "filter", lambda: S.step_filter(las, params, out_dir, res))
         # 3. DTM
         dtm, ground_las = self._step(tile, "dtm", lambda: S.step_dtm(
             las, params, out_dir, crs, res, existing_dtm=tile_in.existing_dtm,

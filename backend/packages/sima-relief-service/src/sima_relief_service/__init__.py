@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from .contract import (
     ReliefParams, ReliefRequest, TileInput,
-    FilterParams, SmrfParams, SmoothingParams, DsmParams, DerivativesParams,
+    FilterParams, SmrfParams, SmoothingParams, DtmParams, DsmParams, DerivativesParams,
     HeightsParams, VectorsParams,
 )
 from .status import Job, Tile, TileStep, OutputArtifact, FailedTile
@@ -25,7 +25,7 @@ from .determinism import DeterminismContext
 
 __all__ = [
     "ReliefService", "ReliefResult", "ReliefRequest", "ReliefParams", "TileInput",
-    "FilterParams", "SmrfParams", "SmoothingParams", "DsmParams", "DerivativesParams",
+    "FilterParams", "SmrfParams", "SmoothingParams", "DtmParams", "DsmParams", "DerivativesParams",
     "HeightsParams", "VectorsParams",
     "Job", "Tile", "TileStep", "OutputArtifact", "FailedTile",
     "Storage", "LocalFSStorage", "Session",
