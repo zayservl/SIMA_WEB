@@ -183,7 +183,7 @@ class TestSteps:
         _make_dtm_tif(dtm)
         out_dir = str(tmp_path / "out")
         Path(out_dir).mkdir()
-        result, ground = steps.step_dtm(
+        result, ground, measured = steps.step_dtm(
             "ignored.las", ReliefParams(), out_dir, "EPSG:32642", 1.0,
             existing_dtm=dtm, save_ground_las=False)
         assert result == dtm
@@ -398,3 +398,38 @@ class TestServiceRejectsCrsMismatch:
         steps = [s.name for s in tile.steps]
         assert steps[0] == "crs_check" and "dtm" in steps
         assert tile.steps[0].status == "done"
+
+
+class TestMeasuredMask:
+    """Маска измеренных ячеек: что получено растеризацией, а что достроено."""
+
+    def test_по_умолчанию_не_сохраняется(self, tmp_path):
+        from sima_relief_service import ReliefService, ReliefParams, ReliefRequest, TileInput
+        las = _make_ground_las(str(tmp_path / "m.las"))
+        params = ReliefParams(target_crs="EPSG:32642")
+        params.vectors.horizontals = []
+        svc = ReliefService(root_dir=str(tmp_path / "o1"))
+        tile = svc.run(ReliefRequest(params=params, project_id="m", resolution=1.0,
+                                     tiles=[TileInput(name="m", vls_path=las)])).job.tiles[0]
+        assert "dtm_measured" not in {a.layer for a in tile.output_files}
+
+    def test_маска_отделяет_измеренное_от_достроенного(self, tmp_path):
+        from sima_relief_service import ReliefService, ReliefParams, ReliefRequest, TileInput
+        las = _make_ground_las(str(tmp_path / "m.las"))
+        params = ReliefParams(target_crs="EPSG:32642")
+        params.vectors.horizontals = []
+        params.derivatives.interpolation = True
+        svc = ReliefService(root_dir=str(tmp_path / "o2"), save_measured_mask=True)
+        tile = svc.run(ReliefRequest(params=params, project_id="m", resolution=1.0,
+                                     tiles=[TileInput(name="m", vls_path=las)])).job.tiles[0]
+        arts = {a.layer: a.path for a in tile.output_files}
+        assert "dtm_measured" in arts
+
+        with rasterio.open(arts["dtm_measured"]) as m, rasterio.open(arts["dtm"]) as d:
+            mask = m.read(1)
+            assert m.shape == d.shape and m.transform == d.transform
+            filled = (d.read_masks(1) == 255)
+        assert set(np.unique(mask)) <= {0, 1}
+        # заполнение пустот добавило значения там, где измерений не было
+        assert mask.sum() < filled.sum()
+        assert mask.sum() > 0

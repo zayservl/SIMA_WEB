@@ -54,6 +54,7 @@ class ReliefService:
         storage: Optional[Storage] = None,
         root_dir: Optional[str] = None,
         reject_crs_mismatch: bool = True,
+        save_measured_mask: bool = False,
     ) -> None:
         """
         Args:
@@ -63,9 +64,13 @@ class ReliefService:
                 снимка различаются. Выключать имеет смысл только когда СК в
                 файлах заведомо объявлена неверно, а фактические координаты
                 совпадают.
+            save_measured_mask: сохранять рядом с ЦМР маску измеренных ячеек
+                (слой `dtm_measured`). Нужна, чтобы отделить точность построения
+                рельефа от точности заполнения пустот.
         """
         self.storage: Storage = storage or LocalFSStorage(root_dir or "output")
         self.reject_crs_mismatch = reject_crs_mismatch
+        self.save_measured_mask = save_measured_mask
         # Результаты сверки СК по тайлам: tile_id → CrsCheck. Заполняется в run().
         self.crs_checks: dict[str, CrsCheck] = {}
 
@@ -199,12 +204,14 @@ class ReliefService:
         # 2. filter
         las = self._step(tile, "filter", lambda: S.step_filter(las, params, out_dir, res))
         # 3. DTM
-        dtm, ground_las = self._step(tile, "dtm", lambda: S.step_dtm(
+        dtm, ground_las, measured = self._step(tile, "dtm", lambda: S.step_dtm(
             las, params, out_dir, crs, res, existing_dtm=tile_in.existing_dtm,
-            save_ground_las=True))
+            save_ground_las=True, save_measured_mask=self.save_measured_mask))
         arts.append(S._artifact(dtm, "geotiff", "dtm"))
         if ground_las and os.path.exists(ground_las):
             arts.append(S._artifact(ground_las, "las", "ground_las"))
+        if measured and os.path.exists(measured):
+            arts.append(S._artifact(measured, "geotiff", "dtm_measured"))
         # 3b. DSM (ЦММ) — optional, gated by params.dsm.enabled
         if params.dsm.enabled:
             dsm = self._step(tile, "dsm", lambda: S.step_dsm(las, params, out_dir, crs, res))

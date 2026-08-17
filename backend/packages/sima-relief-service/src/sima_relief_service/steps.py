@@ -93,14 +93,23 @@ def step_dtm(
     resolution: float,
     existing_dtm: Optional[str] = None,
     save_ground_las: bool = True,
-) -> tuple[str, Optional[str]]:
+    save_measured_mask: bool = False,
+) -> tuple[str, Optional[str], Optional[str]]:
     """Построить ЦМР (DTM) из LAS (SMRF) либо использовать существующую ЦМР.
 
     Q3 «Использование существующей ЦМР»: если existing_dtm задан — вернуть его,
-    пропустив расчёт. Возвращает (dtm_path, ground_las_path|None).
+    пропустив расчёт.
+
+    Args:
+        save_measured_mask: сохранить рядом маску измеренных ячеек — какие
+            значения получены растеризацией точек, а какие достроены
+            заполнением пустот.
+
+    Returns:
+        (dtm_path, ground_las_path|None, measured_mask_path|None).
     """
     if existing_dtm:
-        return existing_dtm, None
+        return existing_dtm, None, None
     stem = _stem(las_path)
     ground_las = os.path.join(out_dir, stem + "_ground.las") if save_ground_las else None
     smrf_cfg = map_smrf_config(params.smrf)
@@ -119,12 +128,13 @@ def step_dtm(
                          edge_extrapolation_m=params.derivatives.edge_extrapolation_m,
                          fill_method=params.derivatives.fill_method,
                          fill_passes=params.derivatives.fill_passes,
-                         hydro_flatten=params.derivatives.hydro_flatten),
+                         hydro_flatten=params.derivatives.hydro_flatten,
+                         save_measured_mask=save_measured_mask),
         raster_out=RasterOutputConfig(output_type=params.dtm.output_type),
     )
     gp.get_raster(las_path, crs_wkt=crs, out_path=ground_las)
     dtm_path = gp.raster[-1] if gp.raster else os.path.join(out_dir, stem + "_dem.tif")
-    return dtm_path, ground_las
+    return dtm_path, ground_las, gp.measured_mask
 
 
 # --- 3b. DSM (ЦММ) ------------------------------------------------------

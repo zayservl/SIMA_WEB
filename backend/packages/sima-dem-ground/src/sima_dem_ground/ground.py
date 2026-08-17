@@ -66,6 +66,11 @@ class FillConfig:
     # поведение выбрасывало все пустоты, касающиеся рамки растра, даже
     # вплотную к данным. См. sima_dem_core.raster.holes.
     edge_extrapolation_m: float = 5.0
+    # Сохранять рядом с растром маску измеренных ячеек `<stem>_dem_measured.tif`
+    # (uint8: 1 — значение получено растеризацией точек, 0 — заполнено). После
+    # заполнения пустот отличить одно от другого по самому растру уже нельзя,
+    # а для оценки точности и для отчёта заказчику это разные величины.
+    save_measured_mask: bool = False
 
 
 @dataclass
@@ -126,6 +131,7 @@ class GroundProcessing:
         """Инициализация параметров обработки точек в ЦМР."""
         self.raster: list[str] = []
         self.classified_ground: Optional[str] = None
+        self.measured_mask: Optional[str] = None  # путь маски измеренных ячеек
         self.water_levels: list[float] = []   # отметки гидровыравненных водоёмов, м
         self.aoi = aoi
         self.output_folder = str(output)
@@ -329,6 +335,26 @@ class GroundProcessing:
         with rasterio.open(raster, "w", **profile) as dest:
             dest.write_band(1, result.array)
 
+    @staticmethod
+    def measured_mask_path(raster: str) -> str:
+        """Путь маски измеренных ячеек рядом с растром."""
+        return raster.replace(".tif", "_measured.tif")
+
+    def _save_measured_mask(self, raster: str) -> Optional[str]:
+        """Снять маску валидных ячеек сразу после растеризации и записать её.
+
+        Вызывается до заполнения пустот: позже отличить измеренную ячейку от
+        достроенной по самому растру невозможно.
+        """
+        with rasterio.open(raster) as src:
+            profile = src.profile
+            mask = (src.read_masks(1) == 255).astype("uint8")
+        out = self.measured_mask_path(raster)
+        profile.update(dtype="uint8", nodata=None, count=1)
+        with rasterio.open(out, "w", **profile) as dst:
+            dst.write(mask, 1)
+        return out
+
     def _get_raster_name(self, path: str, out_path: Optional[str]) -> tuple[str, str]:
         """Формирует пути выходного растра ЦМР и сглаженного растра."""
         if out_path:
@@ -349,6 +375,8 @@ class GroundProcessing:
             self._run_pdal(self._build_save_ground_pipeline(path, raster, out_path))
         else:
             self._run_pdal(self._build_ground_pipeline(path, raster, out_path))
+        if self.fill.save_measured_mask:
+            self.measured_mask = self._save_measured_mask(raster)
         if self.fill.fallback_to_min_z:
             self._fill_from_min_z(path, raster)
         if self.interpolate:

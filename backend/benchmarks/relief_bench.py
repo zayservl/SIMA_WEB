@@ -14,6 +14,11 @@
     абсолютных Z, расчёт метрик);
   * точность ЦМР/ЦММ относительно эталона (ME/MAE/RMSE/NMAD/P95/coverage).
 
+Точность считается **только по измеренным ячейкам** — тем, куда попала хотя бы
+одна ground-точка (`measured_mask`). Ячейки, заполненные интерполяцией, описывают
+качество заполнения пустот, а не точность построения рельефа, и в основную метрику
+не входят; их вклад виден отдельно, в поле `accuracy.<слой>.all_cells`.
+
 ВАЖНО о методологии (см. `restore_absolute()`): ВЛС в датасете хранит ТЛО —
 нормализованные высоты. Абсолютные Z восстанавливаются по эталонной ЦМР, поэтому
 сравнение построенной ЦМР с эталоном измеряет точность *растеризации и
@@ -92,6 +97,7 @@ STEP_ORDER = [
 LAYER_STEP = {
     "dtm": "dtm",
     "ground_las": "dtm",
+    "dtm_measured": "dtm",
     "dsm": "dsm",
     "dtm_smooth": "smooth",
     "slope": "slope",
@@ -224,10 +230,50 @@ def align_to_reference(src_path: str, ref_path: str) -> tuple[np.ndarray, np.nda
     return dst, ref_arr
 
 
-def accuracy_metrics(src_path: str, ref_path: str) -> dict:
-    """Метрики отклонения растра от эталонной ЦМР (в метрах)."""
+def measured_mask(mask_path: str, ref_path: str) -> np.ndarray:
+    """Перенести маску измеренных ячеек ЦМР на сетку эталона.
+
+    Маска пишется сервисом (`ReliefService(save_measured_mask=True)`) сразу после
+    растеризации, до заполнения пустот: позже отличить измеренную ячейку от
+    достроенной по самому растру невозможно.
+
+    Перенос — тем же bilinear-приведением, что и сам растр, с порогом 1.0. Порог
+    строгий намеренно: сетки кандидата и эталона не совмещены, ячейка эталона
+    обычно смешивает четыре ячейки кандидата, и достаточно одной заполненной,
+    чтобы значение перестало быть чисто измеренным.
+
+    Returns:
+        Булев массив формы эталона; True — значение опирается только на измерения.
+    """
+    with rasterio.open(mask_path) as src:
+        hit = src.read(1).astype("float64")
+        src_transform, src_crs = src.transform, src.crs
+    with rasterio.open(ref_path) as ref:
+        dst = np.zeros(ref.shape, dtype="float64")
+        reproject(
+            source=hit, destination=dst,
+            src_transform=src_transform, src_crs=src_crs or ref.crs,
+            dst_transform=ref.transform, dst_crs=ref.crs,
+            resampling=Resampling.bilinear,
+        )
+    return dst >= 0.999
+
+
+def accuracy_metrics(src_path: str, ref_path: str,
+                     mask: Optional[np.ndarray] = None) -> dict:
+    """Метрики отклонения растра от эталонной ЦМР (в метрах).
+
+    Args:
+        src_path: оцениваемый растр.
+        ref_path: эталон.
+        mask: ограничение области сравнения — например, `measured_mask`. None —
+            сравнивать по всем ячейкам, где оба растра валидны (в том числе по
+            заполненным интерполяцией).
+    """
     cand, ref = align_to_reference(src_path, ref_path)
     valid = np.isfinite(cand) & np.isfinite(ref)
+    if mask is not None:
+        valid &= mask
     n = int(valid.sum())
     n_ref = int(np.isfinite(ref).sum())
     out = {
@@ -328,7 +374,7 @@ def run_triplet(
             season="summer",
             tiles=[TileInput(name=tri.name, vls_path=abs_las, afs_path=tri.ofp)],
         )
-        svc = ReliefService(root_dir=str(tile_dir / "service"))
+        svc = ReliefService(root_dir=str(tile_dir / "service"), save_measured_mask=True)
         t0 = time.perf_counter()
         result = svc.run(request)
         prep["service_wall_ms"] = (time.perf_counter() - t0) * 1000.0
@@ -369,13 +415,31 @@ def run_triplet(
                 }
             rec["contours_detail"] = detail
 
-        # 3. Точность относительно эталонной ЦМР
+        # 3. Точность относительно эталонной ЦМР — по измеренным ячейкам.
+        # Заполненные интерполяцией ячейки исключены: их отклонение описывает
+        # качество заполнения пустот, а не точность построения рельефа. Метрики
+        # по всем ячейкам сохраняются рядом, в поле `all_cells`.
         acc: dict = {}
         with timed(prep, "metrics_ms"):
+            mask_path = art_map.get("dtm_measured")
+            mask = None
+            if mask_path and os.path.exists(mask_path):
+                try:
+                    mask = measured_mask(mask_path, tri.ref)
+                except Exception as e:  # noqa: BLE001 — маска не должна ронять прогон
+                    rec.setdefault("warnings", []).append(
+                        f"маска измеренных ячеек не построена ({e})")
+            else:
+                rec.setdefault("warnings", []).append("маска измеренных ячеек не сохранена")
+            # ЦМР, сглаженная ЦМР и ЦММ строятся на одной сетке, поэтому маска
+            # измеренных ячеек ЦМР применима ко всем трём слоям.
             for layer in ("dtm", "dtm_smooth", "dsm"):
-                if layer in art_map and os.path.exists(art_map[layer]):
-                    acc[layer] = accuracy_metrics(art_map[layer], tri.ref)
-                    acc[layer].update(raster_stats(art_map[layer]))
+                if layer not in art_map or not os.path.exists(art_map[layer]):
+                    continue
+                acc[layer] = accuracy_metrics(art_map[layer], tri.ref, mask=mask)
+                acc[layer]["measured_only"] = mask is not None
+                acc[layer]["all_cells"] = accuracy_metrics(art_map[layer], tri.ref)
+                acc[layer].update(raster_stats(art_map[layer]))
             # ЦММ − ЦМР: высота объектов над землёй (у ЦММ нет эталона)
             if "dsm" in art_map and "dtm" in art_map:
                 dsm_a = align_to_reference(art_map["dsm"], tri.ref)[0]
@@ -430,10 +494,12 @@ def run_benchmark(
             fh.flush()
             if verbose:
                 acc = rec.get("accuracy", {}).get("dtm", {})
+                allc = acc.get("all_cells", {})
                 print(f"[{i}/{len(triplets)}] {tri.name:22s} {rec['status']:7s} "
                       f"{rec['total_wall_ms']/1000:7.1f}s  "
-                      f"RMSE={acc.get('rmse', float('nan')):.3f} м  "
-                      f"cov={acc.get('coverage_pct', float('nan')):.1f}%"
+                      f"RMSE={acc.get('rmse', float('nan')):.3f} м "
+                      f"(с интерп. {allc.get('rmse', float('nan')):.3f})  "
+                      f"измерено={acc.get('coverage_pct', float('nan')):.1f}%"
                       + (f"  {rec['reason']}" if rec["status"] == "failed" else ""),
                       flush=True)
     if not keep_outputs:
