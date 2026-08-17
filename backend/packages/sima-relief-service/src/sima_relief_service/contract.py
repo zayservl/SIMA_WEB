@@ -23,7 +23,6 @@ FilterMethod = str  # 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf'
 class FilterParams:
     spm_min: Optional[float] = None
     spm_max: Optional[float] = None
-    spr_num: Optional[int] = None
     spp_min: Optional[float] = None
     spp_max: Optional[float] = None
     mean_k: Optional[int] = None
@@ -175,7 +174,7 @@ def filter_kwargs(p: ReliefParams) -> dict:
     """Нормализация полей фильтра UI-контракта → kwargs конструкторов фильтров.
 
     manual: z_min=spm_min, z_max=spm_max
-    stat: stat_m=mult (σ-кратность), neighbours=spr_num
+    stat: stat_m=mult (σ-кратность)
     range: range_min_pct=spp_min, range_max_pct=spp_max
     outlier: neighbours=mean_k, multiplier=mult
 

@@ -8,7 +8,7 @@ import { generateTiles, newSessionId } from '@/lib/tiles'
 // флагом (service.py::_run_tile), поэтому флаги остаются в контракте.
 export const defaultReliefParams: ReliefParams = {
   filter_method: 'smrf',
-  filter: { spm_min: 0, spm_max: 100, spr_num: 2, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
+  filter: { spm_min: 0, spm_max: 100, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
   smrf: { slope: 0.2, window: 16, threshold: 0.45, scalar: 1.2, cut_smrf: false, elm: true, outlier: true },
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   smoothing_preset: 'medium',
@@ -29,10 +29,6 @@ export const defaultReliefParams: ReliefParams = {
     // FillConfig): значения выровнены с DerivativesParams бэкенда (True/100).
     interpolation: true, inter_amp: 100, edge_extrapolation_m: 5,
     fill_method: 'laplace', fill_passes: 3, hydro_flatten: true,
-    // Уклоны и экспозиции интерполируются независимо от ЦМР — по умолчанию
-    // повторяют её настройки.
-    slopes_interpolation: true, slopes_inter_amp: 100, slopes_edge_extrapolation_m: 5,
-    aspect_interpolation: true, aspect_inter_amp: 100, aspect_edge_extrapolation_m: 5,
   },
   heights: { enabled: false, source: 'las', min_distance_m: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },

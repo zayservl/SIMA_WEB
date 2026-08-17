@@ -164,7 +164,6 @@ export interface ReliefParams {
   filter: {
     spm_min?: number
     spm_max?: number
-    spr_num?: number
     spp_min?: number
     spp_max?: number
     mean_k?: number
@@ -238,14 +237,6 @@ export interface ReliefParams {
     fill_passes: number
     /** Гидровыравнивание: пустоты-водоёмы получают плоскую отметку вместо интерполяции. */
     hydro_flatten: boolean
-    /** Интерполяция и экстраполяция карты уклонов — задаются независимо от ЦМР. */
-    slopes_interpolation: boolean
-    slopes_inter_amp: number
-    slopes_edge_extrapolation_m: number
-    /** Интерполяция и экстраполяция карты экспозиций — задаются независимо от ЦМР. */
-    aspect_interpolation: boolean
-    aspect_inter_amp: number
-    aspect_edge_extrapolation_m: number
   }
   heights: {
     enabled: boolean

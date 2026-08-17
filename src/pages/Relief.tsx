@@ -68,54 +68,6 @@ function VoidFillControls({ method, passes, hydro, onChange }: {
   )
 }
 
-// Один слой в блоке «Интерполяция и экстраполяция». Параметры задаются
-// независимо для ЦМР, карты уклонов и карты экспозиций. Блок ЦМР дополнительно
-// показывает параметры самого механизма заполнения — у уклонов и экспозиций
-// заполнение выполняется тем же кодом, но настраивается только для ЦМР.
-function InterpolationBlock({ title, hint, enabled, amp, edge, disabled, disabledHint, onChange, fill }: {
-  title: string
-  hint: string
-  enabled: boolean
-  amp: number
-  edge: number
-  disabled?: boolean
-  disabledHint?: string
-  onChange: (patch: { enabled?: boolean; amp?: number; edge?: number }) => void
-  fill?: {
-    method: VoidFillMethod
-    passes: number
-    hydro: boolean
-    onChange: (patch: { method?: VoidFillMethod; passes?: number; hydro?: boolean }) => void
-  }
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 p-3">
-      <span className="inline-flex items-center gap-1.5">
-        <Checkbox checked={enabled} onChange={(v) => onChange({ enabled: v })} label={title} disabled={disabled} />
-        <InfoHint text={hint} />
-      </span>
-      {disabled ? (
-        <p className="hint-base mt-2">{disabledHint}</p>
-      ) : (
-        <div className={`mt-2 space-y-3 ${enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-          <Field label="Амплитуда интерполяции" tooltip="inter_amp — радиус поиска значений при заполнении пустот обратно взвешенным расстоянием (IDW).">
-            <NumberInput value={amp} step={0.1} min={0} onChange={(v) => onChange({ amp: v })} />
-          </Field>
-          <Field label="Экстраполяция края, м" tooltip="На сколько метров допустимо выйти за границу валидной области. 0 — заполнять только внутренние дыры: пустоты, касающиеся рамки растра, остаются незаполненными.">
-            <NumberInput value={edge} step={1} min={0} onChange={(v) => onChange({ edge: v })} />
-          </Field>
-          {fill && (
-            <VoidFillControls
-              method={fill.method} passes={fill.passes} hydro={fill.hydro}
-              onChange={fill.onChange}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function Relief() {
   const { projectId } = useParams()
   const navigate = useNavigate()
@@ -438,65 +390,47 @@ export default function Relief() {
         </Card>
       </div>
 
-      {/* Интерполяция и экстраполяция — раздельно по выходам */}
+      {/* Заполнение пустот ЦМР — единственный слой, где оно выполняется:
+          уклоны и экспозиции строятся gdal.DEMProcessing из уже заполненной ЦМР. */}
       <Card>
         <CardPad>
           <Accordion title="Интерполяция и экстраполяция">
-            <div className="grid gap-3 md:grid-cols-3">
-              <InterpolationBlock
-                title="ЦМР"
-                hint="Заполнение пустот ЦМР перед расчётом производных. Выполняется до сглаживания и построения уклонов/экспозиций."
-                enabled={p.derivatives.interpolation}
-                amp={p.derivatives.inter_amp}
-                edge={p.derivatives.edge_extrapolation_m}
-                fill={{
-                  method: p.derivatives.fill_method,
-                  passes: p.derivatives.fill_passes,
-                  hydro: p.derivatives.hydro_flatten,
-                  onChange: (patch) => set('derivatives', {
-                    ...p.derivatives,
-                    ...(patch.method !== undefined && { fill_method: patch.method }),
-                    ...(patch.passes !== undefined && { fill_passes: patch.passes }),
-                    ...(patch.hydro !== undefined && { hydro_flatten: patch.hydro }),
-                  }),
-                }}
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { edge_extrapolation_m: patch.edge }),
-                })}
-              />
-              <InterpolationBlock
-                title="Карта уклонов"
-                hint="Заполнение пустот карты уклонов. Задаётся независимо от ЦМР."
-                enabled={p.derivatives.slopes_interpolation}
-                amp={p.derivatives.slopes_inter_amp}
-                edge={p.derivatives.slopes_edge_extrapolation_m}
-                disabled={!p.derivatives.slopes}
-                disabledHint="Карта уклонов выключена в блоке «Производные слои»"
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { slopes_interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { slopes_inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { slopes_edge_extrapolation_m: patch.edge }),
-                })}
-              />
-              <InterpolationBlock
-                title="Карта экспозиций"
-                hint="Заполнение пустот карты экспозиций. Задаётся независимо от ЦМР."
-                enabled={p.derivatives.aspect_interpolation}
-                amp={p.derivatives.aspect_inter_amp}
-                edge={p.derivatives.aspect_edge_extrapolation_m}
-                disabled={!p.derivatives.aspect}
-                disabledHint="Карта экспозиций выключена в блоке «Производные слои»"
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { aspect_interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { aspect_inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { aspect_edge_extrapolation_m: patch.edge }),
-                })}
-              />
+            <div className="max-w-md space-y-3">
+              <p className="hint-base">
+                Заполнение пустот ЦМР выполняется до сглаживания и до построения производных,
+                поэтому уклоны, экспозиции и TPI наследуют его результат.
+              </p>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <span className="inline-flex items-center gap-1.5">
+                  <Checkbox
+                    checked={p.derivatives.interpolation}
+                    onChange={(v) => set('derivatives', { ...p.derivatives, interpolation: v })}
+                    label="Заполнять пустоты ЦМР"
+                  />
+                  <InfoHint text="Заполняются внутренние дыры и пустоты не далее заданной экстраполяции от данных. Область, куда съёмка не заходила, остаётся пустой намеренно." />
+                </span>
+                <div className={`mt-2 space-y-3 ${p.derivatives.interpolation ? '' : 'opacity-40 pointer-events-none'}`}>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Амплитуда интерполяции" tooltip="inter_amp — радиус поиска значений при заполнении пустот обратно взвешенным расстоянием (IDW).">
+                      <NumberInput value={p.derivatives.inter_amp} step={0.1} min={0} onChange={(v) => set('derivatives', { ...p.derivatives, inter_amp: v })} />
+                    </Field>
+                    <Field label="Экстраполяция края, м" tooltip="На сколько метров допустимо выйти за границу валидной области. 0 — заполнять только внутренние дыры: пустоты, касающиеся рамки растра, остаются незаполненными.">
+                      <NumberInput value={p.derivatives.edge_extrapolation_m} step={1} min={0} onChange={(v) => set('derivatives', { ...p.derivatives, edge_extrapolation_m: v })} />
+                    </Field>
+                  </div>
+                  <VoidFillControls
+                    method={p.derivatives.fill_method}
+                    passes={p.derivatives.fill_passes}
+                    hydro={p.derivatives.hydro_flatten}
+                    onChange={(patch) => set('derivatives', {
+                      ...p.derivatives,
+                      ...(patch.method !== undefined && { fill_method: patch.method }),
+                      ...(patch.passes !== undefined && { fill_passes: patch.passes }),
+                      ...(patch.hydro !== undefined && { hydro_flatten: patch.hydro }),
+                    })}
+                  />
+                </div>
+              </div>
             </div>
           </Accordion>
         </CardPad>

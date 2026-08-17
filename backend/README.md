@@ -587,7 +587,6 @@ result = svc.run(request)
 |---|---|---|---|
 | `spm_min` | float \| None | None | Z_min для manual |
 | `spm_max` | float \| None | None | Z_max для manual |
-| `spr_num` | int \| None | None | m для stat (μ±mσ) |
 | `spp_min` | float \| None | None | Мин. перцентиль для range (0-100, доля вычисляется в `contract.filter_kwargs`) |
 | `spp_max` | float \| None | None | Макс. перцентиль для range (0-100, доля вычисляется в `contract.filter_kwargs`) |
 | `mean_k` | int \| None | None | k соседей для outlier |
