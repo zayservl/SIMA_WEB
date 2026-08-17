@@ -45,6 +45,7 @@ def delineate_crowns(
     chm: np.ndarray,
     tops: TreeTops,
     min_height_m: float = DEFAULT_MIN_HEIGHT_M,
+    surface: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Построить растр меток крон водоразделом от маркеров-вершин.
 
@@ -52,18 +53,30 @@ def delineate_crowns(
         chm: растр высот полога, м; nodata — NaN.
         tops: вершины с маркерами (результат `detect_tree_tops`).
         min_height_m: нижняя граница полога — ниже неё заливка запрещена.
+        surface: готовая поверхность стоимости (`cost.build_cost_surface`).
+            None — заливка по `−CHM`, то есть только по высоте.
 
     Returns:
         Целочисленный растр меток той же формы, что `chm`; 0 — вне крон.
+
+    Маска полога и маркеры от поверхности не зависят, поэтому число крон всегда
+    равно числу вершин — поверхность меняет только положение границ между ними.
     """
     work = np.asarray(chm, dtype=float)
     work = np.where(np.isfinite(work), work, 0.0)
     canopy = work >= min_height_m
     if len(tops) == 0 or not canopy.any():
         return np.zeros(work.shape, dtype=np.int32)
-    # Водораздел заливает от минимумов, поэтому подаём инвертированный полог:
-    # вершина дерева становится дном воронки, седловина между кронами — гребнем.
-    labels = watershed(-work, markers=tops.markers, mask=canopy)
+    if surface is None:
+        # Водораздел заливает от минимумов, поэтому подаём инвертированный полог:
+        # вершина дерева становится дном воронки, седловина между кронами — гребнем.
+        relief = -work
+    else:
+        relief = np.asarray(surface, dtype=float)
+        if relief.shape != work.shape:
+            raise ValueError(
+                f"Поверхность стоимости {relief.shape} не совпадает с ЦМД {work.shape}")
+    labels = watershed(relief, markers=tops.markers, mask=canopy)
     return labels.astype(np.int32)
 
 
