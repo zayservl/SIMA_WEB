@@ -293,3 +293,108 @@ class TestReliefService:
         ma = svc.assess(req)
         assert ma.vls is not None and ma.afs is not None
         assert ma.vls.density_pts_m2 > 0 and ma.afs.resolution_m > 0
+
+# --- сверка СК внутри пары АФС+ВЛС --------------------------------------
+
+def _make_las_with_crs(path: str, epsg: int, n: int = 200) -> str:
+    """Облако с объявленной СК: laspy пишет её в VLR при header.add_crs."""
+    from pyproj import CRS as PyCRS
+    las = laspy.create(point_format=3, file_version="1.4")
+    rng = np.random.default_rng(7)
+    las.x = rng.uniform(100.0, 200.0, n)
+    las.y = rng.uniform(100.0, 200.0, n)
+    las.z = np.full(n, 95.0)
+    las.classification = np.full(n, 2, dtype=np.uint8)
+    las.header.add_crs(PyCRS.from_epsg(epsg))
+    las.write(path)
+    return path
+
+
+class TestCrsEquivalence:
+
+    def test_epsg_и_полный_wkt_одной_ск_совпадают(self):
+        from pyproj import CRS as PyCRS
+        from sima_relief_service import crs_equivalent
+        assert crs_equivalent("EPSG:32637", PyCRS.from_epsg(32637).to_wkt())
+
+    def test_разные_ск_не_совпадают(self):
+        from sima_relief_service import crs_equivalent
+        assert not crs_equivalent("EPSG:32637", "EPSG:4326")
+
+    def test_пустая_ск_не_совпадает_ни_с_чем(self):
+        from sima_relief_service import crs_equivalent
+        assert not crs_equivalent("", "EPSG:32637")
+        assert not crs_equivalent("", "")
+
+
+class TestPairCrsCheck:
+
+    def test_одиночный_материал_не_сверяется(self, tmp_path):
+        from sima_relief_service import check_pair_crs
+        las = _make_las_with_crs(str(tmp_path / "a.las"), 32637)
+        assert check_pair_crs(las, None).status == "single"
+        assert check_pair_crs(None, None).status == "single"
+
+    def test_совпадающие_ск(self, tmp_path):
+        from sima_relief_service import check_pair_crs
+        las = _make_las_with_crs(str(tmp_path / "a.las"), 32637)
+        tif = _make_dtm_tif(str(tmp_path / "a.tif"), crs="EPSG:32637")
+        check = check_pair_crs(las, tif)
+        assert check.status == "match" and not check.blocking
+
+    def test_расхождение_ск_блокирует(self, tmp_path):
+        from sima_relief_service import check_pair_crs
+        las = _make_las_with_crs(str(tmp_path / "a.las"), 32637)
+        tif = _make_dtm_tif(str(tmp_path / "a.tif"), crs="EPSG:32642")
+        check = check_pair_crs(las, tif)
+        assert check.status == "mismatch" and check.blocking
+        assert "32637" in check.reason and "32642" in check.reason
+
+    def test_необъявленная_ск_не_блокирует(self, tmp_path):
+        # сверять нечем; target_crs всё равно переопределяет систему при чтении
+        from sima_relief_service import check_pair_crs
+        las = _make_ground_las(str(tmp_path / "a.las"))
+        tif = _make_dtm_tif(str(tmp_path / "a.tif"), crs="EPSG:32642")
+        check = check_pair_crs(las, tif)
+        assert check.status == "unknown" and not check.blocking
+
+
+class TestServiceRejectsCrsMismatch:
+
+    def _request(self, tmp_path, afs_epsg: int):
+        from sima_relief_service import ReliefParams, ReliefRequest, TileInput
+        las = _make_las_with_crs(str(tmp_path / "t.las"), 32637)
+        tif = _make_dtm_tif(str(tmp_path / "t.tif"), crs=f"EPSG:{afs_epsg}")
+        params = ReliefParams(target_crs="EPSG:32637")
+        params.vectors.horizontals = []
+        return ReliefRequest(
+            params=params, project_id="crs", resolution=1.0,
+            tiles=[TileInput(name="t", vls_path=las, afs_path=tif)])
+
+    def test_тайл_с_разной_ск_пропускается(self, tmp_path):
+        from sima_relief_service import ReliefService
+        svc = ReliefService(root_dir=str(tmp_path / "out"))
+        job = svc.run(self._request(tmp_path, 32642)).job
+        tile = job.tiles[0]
+        assert tile.status == "skipped"
+        assert "СК не совпадают" in tile.reason
+        assert job.tiles_skipped == 1 and job.tiles_done == 0
+        # расчётных шагов не было — только сверка
+        assert [s.name for s in tile.steps] == ["crs_check"]
+        assert tile.output_files == []
+
+    def test_отбраковку_можно_выключить(self, tmp_path):
+        from sima_relief_service import ReliefService
+        svc = ReliefService(root_dir=str(tmp_path / "out2"), reject_crs_mismatch=False)
+        tile = svc.run(self._request(tmp_path, 32642)).job.tiles[0]
+        assert tile.status != "skipped"
+        assert "crs_check" not in [s.name for s in tile.steps]
+
+    def test_совпадающая_ск_считается(self, tmp_path):
+        from sima_relief_service import ReliefService
+        svc = ReliefService(root_dir=str(tmp_path / "out3"))
+        tile = svc.run(self._request(tmp_path, 32637)).job.tiles[0]
+        assert tile.status == "done"
+        steps = [s.name for s in tile.steps]
+        assert steps[0] == "crs_check" and "dtm" in steps
+        assert tile.steps[0].status == "done"

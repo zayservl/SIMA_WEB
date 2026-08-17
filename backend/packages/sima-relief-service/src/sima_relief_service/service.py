@@ -23,7 +23,7 @@ from .determinism import DeterminismContext
 from .status import Job, OutputArtifact, Tile
 from .storage import LocalFSStorage, Session, Storage, _new_id
 from . import steps as S
-from .assessment import MaterialAssessment, assess_materials
+from .assessment import CrsCheck, MaterialAssessment, assess_materials, check_pair_crs
 
 
 def _now_iso() -> str:
@@ -49,8 +49,25 @@ class ReliefResult:
 class ReliefService:
     """Сервис рельефа: оркестрация шагов по тайлам с трекингом статусов."""
 
-    def __init__(self, storage: Optional[Storage] = None, root_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        storage: Optional[Storage] = None,
+        root_dir: Optional[str] = None,
+        reject_crs_mismatch: bool = True,
+    ) -> None:
+        """
+        Args:
+            storage: хранилище артефактов; по умолчанию локальная ФС.
+            root_dir: корень локального хранилища.
+            reject_crs_mismatch: отбраковывать тайлы, у которых СК облака и
+                снимка различаются. Выключать имеет смысл только когда СК в
+                файлах заведомо объявлена неверно, а фактические координаты
+                совпадают.
+        """
         self.storage: Storage = storage or LocalFSStorage(root_dir or "output")
+        self.reject_crs_mismatch = reject_crs_mismatch
+        # Результаты сверки СК по тайлам: tile_id → CrsCheck. Заполняется в run().
+        self.crs_checks: dict[str, CrsCheck] = {}
 
     # --- публичный API ---
 
@@ -84,6 +101,18 @@ class ReliefService:
                 status="running", started_at=_now_iso(), output_dir=tile_dir,
             )
             job.tiles.append(tile)
+
+            # Отбраковка до расчёта: приведения координат в конвейере нет,
+            # поэтому пара с разными СК даёт молча смещённый результат.
+            check = self._check_crs(tile, tile_in) if self.reject_crs_mismatch else None
+            if check is not None and check.blocking:
+                tile.status = "skipped"
+                tile.reason = check.reason
+                tile.finished_at = _now_iso()
+                tile.duration_ms = _ms(tile.started_at or _now_iso())
+                self.crs_checks[tile.id] = check
+                continue
+
             try:
                 arts = self._run_tile(tile, tile_in, request.params, crs, resolution, tile_dir)
                 self.artifacts_for(tile, arts)
@@ -112,6 +141,27 @@ class ReliefService:
         return ReliefResult(job=job, session=session, assessment=None, artifacts=artifacts)
 
     # --- внутреннее ---
+
+    def _check_crs(self, tile: Tile, tile_in) -> CrsCheck:
+        """Сверить СК пары и записать результат отдельным шагом тайла.
+
+        Шаг видим в таймлайне наравне с расчётными: он объясняет, почему тайл
+        пропущен, и подтверждает сверку там, где она прошла. Неопределённая СК
+        расчёт не блокирует — сверять нечем, а `target_crs` всё равно
+        переопределяет систему при чтении облака.
+        """
+        check = check_pair_crs(tile_in.vls_path, tile_in.afs_path)
+        st = tile.step("crs_check")
+        st.mark_running(_now_iso())
+        ms = _ms(st.started_at or _now_iso())
+        if check.blocking:
+            st.mark_failed(_now_iso(), ms, check.reason or "СК не совпадают")
+        elif check.status == "match":
+            st.mark_done(_now_iso(), ms, "СК облака и снимка совпадают")
+        else:
+            st.mark_skipped(check.reason or "сверять не с чем: в паре один материал")
+        self.crs_checks[tile.id] = check
+        return check
 
     def _step(self, tile: Tile, name: str, fn: Callable) -> object:
         """Выполнить один шаг с трекингом статуса. На провал — _StepFailed."""
