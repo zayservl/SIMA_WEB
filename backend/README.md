@@ -256,6 +256,10 @@ jupyter notebook relief_demo.ipynb
 | `fill_passes` | int | 3 | Проходов заполнения |
 | `max_search_distance` | int | 100 | Радиус поиска для `fill_method="idw"`, px |
 | `edge_extrapolation_m` | float | 0.0 | Экстраполяция за границу данных, м |
+| `smooth` | bool | False | Гауссово сглаживание полога после заполнения пустот |
+| `smooth_sigma` | float | 1.0 | σ гауссова фильтра; умножается на `resolution` |
+| `smooth_order` | int | 0 | Порядок производной гауссианы; 0 — обычное сглаживание |
+| `smooth_window` | int | 3 | Размер окна, задаёт усечение ядра (`truncate`) |
 | `with_intensity` | bool | False | Дополнительный растр интенсивности (mean) |
 | `with_density` | bool | False | Дополнительный растр плотности (`nndistance`, mean) |
 | `save_classified_las` | bool | False | Сохранить облако с переклассифицированной растительностью |
@@ -264,6 +268,12 @@ jupyter notebook relief_demo.ipynb
 
 Гидровыравнивание при заполнении пустот ЦМД не применяется: на растре высот над
 землёй вода и так близка к нулю.
+
+Сглаживание использует тот же `sima_dem_core.raster.smooth.gauss_smooth`, что и
+ЦМР, с той же семантикой параметров. Исходный растр не заменяется: сглаженный
+пишется рядом как `<stem>_chm_smooth.tif` и возвращается в `CHMResult.chm_smooth`.
+Медианное сглаживание в `prepare_chm` (радиус `smooth_radius_px`) — отдельная
+операция: она нужна только внутри детекции вершин и на выходной растр не влияет.
 
 ### Детекция вершин (`treetops`)
 

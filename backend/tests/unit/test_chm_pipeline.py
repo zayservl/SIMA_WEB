@@ -89,3 +89,58 @@ class TestAoi:
     def test_обрезка_добавляется_только_с_aoi(self):
         assert len(stage(pipeline(aoi=None), 'filters.crop')) == 0
         assert len(stage(pipeline(aoi='POLYGON((0 0,1 0,1 1,0 1,0 0))'), 'filters.crop')) == 1
+
+
+class TestSmoothing:
+    """Гауссово сглаживание полога — тот же фильтр и та же семантика, что у ЦМР."""
+
+    def _raster(self, tmp_path, values):
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+        path = tmp_path / 'chm.tif'
+        arr = np.asarray(values, dtype='float32')
+        with rasterio.open(
+            path, 'w', driver='GTiff', height=arr.shape[0], width=arr.shape[1],
+            count=1, dtype='float32', nodata=-9999.0,
+            transform=from_origin(0, arr.shape[0], 1, 1),
+        ) as dst:
+            dst.write(arr, 1)
+        return str(path)
+
+    def test_по_умолчанию_не_выполняется(self, tmp_path):
+        builder = CHMBuilder(output=str(tmp_path), crs='EPSG:32640')
+        assert builder._smooth(self._raster(tmp_path, [[1.0]]), str(tmp_path / 'o.tif')) is None
+
+    def test_сглаживание_снимает_одиночный_выброс(self, tmp_path):
+        import numpy as np
+        import rasterio
+        src = self._raster(tmp_path, [[0.0] * 5, [0.0] * 5,
+                                      [0.0, 0.0, 10.0, 0.0, 0.0],
+                                      [0.0] * 5, [0.0] * 5])
+        out = str(tmp_path / 'chm_smooth.tif')
+        builder = CHMBuilder(output=str(tmp_path), crs='EPSG:32640',
+                             config=CHMConfig(smooth=True, smooth_sigma=1.0,
+                                              smooth_window=3, resolution=1.0))
+        assert builder._smooth(src, out) == out
+        with rasterio.open(out) as r:
+            arr = r.read(1)
+        assert arr[2, 2] < 10.0          # пик срезан
+        assert arr[2, 1] > 0.0           # энергия ушла к соседям
+        assert np.isclose(arr.sum(), 10.0, rtol=0.05)
+
+    def test_sigma_умножается_на_разрешение(self, tmp_path):
+        import rasterio
+        src = self._raster(tmp_path, [[0.0] * 7, [0.0] * 7, [0.0] * 7,
+                                      [0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0],
+                                      [0.0] * 7, [0.0] * 7, [0.0] * 7])
+        peaks = []
+        for resolution in (0.5, 2.0):
+            out = str(tmp_path / f'sm_{resolution}.tif')
+            CHMBuilder(output=str(tmp_path), crs='EPSG:32640',
+                       config=CHMConfig(smooth=True, smooth_sigma=1.0, smooth_window=5,
+                                        resolution=resolution))._smooth(src, out)
+            with rasterio.open(out) as r:
+                peaks.append(float(r.read(1)[3, 3]))
+        # крупнее ячейка → больше эффективная sigma → сильнее срезан пик
+        assert peaks[1] < peaks[0]

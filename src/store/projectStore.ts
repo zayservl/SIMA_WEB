@@ -78,7 +78,7 @@ export const defaultForestParams: ForestParams = {
     },
   },
   smoothing_preset: 'medium',
-  smoothing: { sigma: 1.0, order: 0, window: 3 },
+  smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   output_resolution_preset: 'native',
   dsm_source: { kind: 'system' },
   derivatives_source: { kind: 'system' },

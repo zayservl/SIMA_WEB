@@ -69,7 +69,11 @@ export default function Forest() {
     setP((s) => ({
       ...s,
       smoothing_preset: v,
-      smoothing: { ...s.smoothing, sigma: v === 'custom' ? s.smoothing.sigma : SIGMA_BY_PRESET[v] },
+      smoothing: {
+        ...s.smoothing,
+        enabled: true,
+        sigma: v === 'custom' ? s.smoothing.sigma : SIGMA_BY_PRESET[v],
+      },
     }))
 
   const handleRun = () => {

@@ -348,8 +348,15 @@ export interface ForestParams {
     /** Доля самых высоких ячеек кроны, отбрасываемых при расчёте устойчивой высоты. */
     height_trim: number
   }
-  /** Экспертные параметры сглаживания — действуют при smoothing_preset='custom'. */
+  /**
+   * Гауссово сглаживание ЦМД — тот же фильтр и та же семантика, что у ЦМР
+   * (backend: CHMConfig.smooth / smooth_sigma / smooth_order / smooth_window →
+   * sima_dem_core.raster.smooth.gauss_smooth). sigma умножается на разрешение
+   * растра. Сглаженный растр пишется рядом с исходным, не заменяя его.
+   * Экспертные поля действуют при smoothing_preset='custom'.
+   */
   smoothing: {
+    enabled: boolean
     sigma: number
     order: number
     window: number
