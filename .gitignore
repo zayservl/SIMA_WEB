@@ -39,10 +39,11 @@ backend/output_relief_demo/
 # Ключи доступа к S3 (в репозиторий не кладём)
 backend/.s3_credentials.json
 
-# Рабочие каталоги S3-бенчмарков: скачанные LAS и артефакты тайлов
-backend/benchmarks/results_*/_work/
-backend/benchmarks/results_*/_las_cache/
-backend/benchmarks/results_*/previews/
+# Рабочие каталоги бенчмарков: скачанные LAS и промежуточные артефакты тайлов.
+# Шаблон results* покрывает и локальный results/, и S3-прогоны results_s3_*.
+backend/benchmarks/results*/_work/
+backend/benchmarks/results*/_las_cache/
+backend/benchmarks/results*/previews/
 
 # Внутренние материалы (не публиковать)
 Архитектурная концепция.pdf

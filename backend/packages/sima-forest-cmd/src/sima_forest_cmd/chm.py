@@ -24,6 +24,7 @@ import rasterio
 from osgeo import gdal
 
 from sima_dem_core.raster.holes import fill_voids, px_from_metres
+from sima_dem_core.raster.smooth import gauss_smooth
 
 # Классы ASPRS, которыми размечается растительность по высоте над землёй.
 CLASS_LOW_VEGETATION = 3
@@ -51,6 +52,15 @@ class CHMConfig:
     fill_passes: int = 3
     max_search_distance: int = 100
     edge_extrapolation_m: float = 0.0
+    # Гауссово сглаживание полога — тот же фильтр, что у ЦМР
+    # (sima_dem_core.raster.smooth.gauss_smooth), и та же семантика параметров:
+    # sigma умножается на разрешение растра, window задаёт усечение ядра.
+    # Выполняется после заполнения пустот; исходный растр не заменяется —
+    # сглаженный пишется рядом как `<stem>_chm_smooth.tif`.
+    smooth: bool = False
+    smooth_sigma: float = 1.0
+    smooth_order: int = 0
+    smooth_window: int = 3
     # Дополнительные каналы — вход будущей сегментации полога, по умолчанию не нужны.
     with_intensity: bool = False
     with_density: bool = False
@@ -65,6 +75,7 @@ class CHMResult:
     """Пути к выходным растрам и облаку."""
 
     chm: str
+    chm_smooth: Optional[str] = None
     intensity: Optional[str] = None
     density: Optional[str] = None
     classified_las: Optional[str] = None
@@ -178,6 +189,26 @@ class CHMBuilder:
         with rasterio.open(raster, "w", **profile) as dest:
             dest.write_band(1, result.array)
 
+    def _smooth(self, raster: str, out_path: str) -> Optional[str]:
+        """Сгладить полог гауссовым фильтром — тем же, что применяется к ЦМР.
+
+        Возвращает путь сглаженного растра или None, если сглаживание выключено.
+        """
+        cfg = self.config
+        if not cfg.smooth:
+            return None
+        gauss_smooth(
+            raster=raster, smoothed=out_path,
+            sigma=cfg.smooth_sigma * cfg.resolution,
+            order=cfg.smooth_order, window_size=cfg.smooth_window,
+            fill_holes=cfg.fill_holes,
+            max_search_distance=cfg.max_search_distance,
+            max_extrapolation_px=px_from_metres(cfg.edge_extrapolation_m, cfg.resolution),
+            fill_passes=cfg.fill_passes,
+            fill_method=cfg.fill_method,
+        )
+        return out_path
+
     def _set_projection(self, raster: str, crs_wkt: Optional[str]) -> None:
         if not raster or not crs_wkt:
             return
@@ -213,11 +244,15 @@ class CHMBuilder:
 
         if self.config.interpolate:
             self._interpolate(paths.chm)
-        for raster in (paths.chm, paths.intensity, paths.density):
+        if self.config.smooth:
+            paths.chm_smooth = self._smooth(
+                paths.chm, os.path.join(self.output_folder, stem + "_chm_smooth.tif"))
+        for raster in (paths.chm, paths.chm_smooth, paths.intensity, paths.density):
             self._set_projection(raster, crs_wkt)
 
-        paths.outputs = [p for p in (paths.chm, paths.intensity, paths.density,
-                                     paths.classified_las) if p and os.path.exists(p)]
+        paths.outputs = [p for p in (paths.chm, paths.chm_smooth, paths.intensity,
+                                     paths.density, paths.classified_las)
+                         if p and os.path.exists(p)]
         return paths
 
 

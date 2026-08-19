@@ -154,12 +154,16 @@ export interface Job {
 // собственная классификация не выполняется (backend: CheckClassification.is_ground).
 export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf' | 'las_class'
 
+// Метод заполнения пустот растра (backend: sima_dem_core.raster.holes.fill_voids).
+// 'laplace' — решение уравнения Лапласа, поверхность гладкая по построению;
+// 'idw' — GDALFillNodata, быстрее, но даёт лучи внутрь крупных пустот.
+export type VoidFillMethod = 'laplace' | 'idw'
+
 export interface ReliefParams {
   filter_method: FilterMethod
   filter: {
     spm_min?: number
     spm_max?: number
-    spr_num?: number
     spp_min?: number
     spp_max?: number
     mean_k?: number
@@ -185,6 +189,14 @@ export interface ReliefParams {
   /** Разрешение выходного файла, м/пиксель. Действует при output_resolution_preset='custom'. */
   output_resolution_m: number
   /**
+   * Растеризация ЦМР (backend: sima_relief_service.contract.DtmParams →
+   * sima_dem_ground.RasterOutputConfig). Как ground-точки сводятся в ячейку
+   * растра; выполняется до заполнения пустот.
+   */
+  dtm: {
+    output_type: 'idw' | 'min' | 'max' | 'mean'
+  }
+  /**
    * ЦММ (цифровая модель местности, DSM) — второй основной выход «Рельефа»
    * наряду с ЦМР. Поля 1:1 к sima_relief_service.contract.DsmParams: сервис
    * строит ЦММ только при enabled=true (шаг 3b). ЦММ — вход модуля «Древостой».
@@ -196,6 +208,12 @@ export interface ReliefParams {
     fill_holes: boolean
     max_search_distance: number
     edge_extrapolation_m: number
+    /** Чем заполняются пустоты: laplace — гладко, idw — быстрее, лучи внутрь крупных дыр. */
+    fill_method: VoidFillMethod
+    /** Проходов заполнения: часть пустот замыкается в дыру только после заполнения соседних. */
+    fill_passes: number
+    /** Пустоты-водоёмы получают плоскую отметку вместо интерполяции. */
+    hydro_flatten: boolean
   }
   derivatives: {
     slopes: boolean
@@ -213,14 +231,12 @@ export interface ReliefParams {
     inter_amp: number
     /** Допустимая экстраполяция ЦМР за границу валидной области, м (0 — только внутренние дыры). */
     edge_extrapolation_m: number
-    /** Интерполяция и экстраполяция карты уклонов — задаются независимо от ЦМР. */
-    slopes_interpolation: boolean
-    slopes_inter_amp: number
-    slopes_edge_extrapolation_m: number
-    /** Интерполяция и экстраполяция карты экспозиций — задаются независимо от ЦМР. */
-    aspect_interpolation: boolean
-    aspect_inter_amp: number
-    aspect_edge_extrapolation_m: number
+    /** Чем заполняются пустоты ЦМР (backend: holes.fill_voids). */
+    fill_method: VoidFillMethod
+    /** Проходов заполнения пустот ЦМР. */
+    fill_passes: number
+    /** Гидровыравнивание: пустоты-водоёмы получают плоскую отметку вместо интерполяции. */
+    hydro_flatten: boolean
   }
   heights: {
     enabled: boolean
@@ -243,14 +259,63 @@ export interface ReliefParams {
 // В режиме 'ai' ручные пороги блока не задаются — их подбирает модель.
 export type ParamMode = 'ai' | 'algorithmic'
 
+/**
+ * Веса поверхности стоимости водораздела (backend: sima_forest_cmd.CostWeights).
+ * Задают, по каким признакам проходит граница между соседними кронами. При
+ * нулевых весах всех слагаемых, кроме `height`, заливка идёт только по высоте
+ * полога — историческое поведение.
+ */
+export interface CrownCostWeights {
+  height: number
+  chm_gradient: number
+  afs_edges: number
+  afs_texture: number
+  intensity: number
+  density: number
+  /** Окно расчёта локального СКО для текстурных границ снимка, пикс. */
+  texture_window: number
+}
+
+/**
+ * Корректировка вершин по аэрофотоснимку (backend: sima_forest_cmd.afs).
+ * Отсекает вершины вне маски растительности и уточняет их положение по кроне
+ * на снимке. Работает только при наличии АФС.
+ */
+export interface AfsCorrection {
+  enabled: boolean
+  /** Вегетационный индекс по RGB: ExG устойчив к яркости, VARI чувствительнее к слабой зелени. */
+  index: 'exg' | 'vari'
+  threshold: number
+  /** Минимальная площадь связного пятна растительности, пикс. 0 — не отсеивать. */
+  min_area_px: number
+  /** Отбрасывать вершины вне маски растительности. */
+  drop_non_vegetation: boolean
+  /** Сдвигать вершину к центру области кроны на снимке. */
+  refine_position: boolean
+  /** Максимальный сдвиг вершины при уточнении, м. */
+  refine_radius_m: number
+}
+
 export interface ForestParams {
   cmd: {
     enabled: boolean
     mode: ParamMode
     threshold_surface: number
     threshold_shrub: number
-    channels: { chm: boolean }
+    /** Дополнительные каналы ЦМД (backend: CHMConfig.with_intensity/with_density). */
+    channels: { chm: boolean; intensity: boolean; density: boolean }
     median_window: number
+    /** Сохранять облако с переклассифицированной по высоте растительностью. */
+    save_classified_las: boolean
+    /** Заполнение пустот полога (backend: CHMConfig). Гидровыравнивание к ЦМД не применяется. */
+    fill: {
+      interpolate: boolean
+      fill_holes: boolean
+      fill_method: VoidFillMethod
+      fill_passes: number
+      max_search_distance: number
+      edge_extrapolation_m: number
+    }
   }
   detection: {
     /** Детекция крон — опциональный расчёт; от неё зависят статистики по сегментам. */
@@ -266,15 +331,32 @@ export interface ForestParams {
      * сетке 0.5 м и 3.0 м на сетке 1 м. Легаси СИМА 1.44: 1 м.
      */
     peak_size_m: number
+    /** Нижняя отсечка высоты: ниже — не дерево (backend: DEFAULT_MIN_HEIGHT_M = 0.5). */
+    min_height_m: number
+    /** Верхняя отсечка высоты: выше — шум ЦМД (backend: DEFAULT_MAX_HEIGHT_M = 60). */
+    max_height_m: number
+    /** Радиус медианного сглаживания ЦМД перед поиском вершин, пикс. 0 — без сглаживания. */
+    smooth_radius_px: number
+    afs_correction: AfsCorrection
+    cost_weights: CrownCostWeights
   }
   stats: {
     enabled: boolean
     percentiles: number[]
     vci_step: number
     metrics: string[]
+    /** Доля самых высоких ячеек кроны, отбрасываемых при расчёте устойчивой высоты. */
+    height_trim: number
   }
-  /** Экспертные параметры сглаживания — действуют при smoothing_preset='custom'. */
+  /**
+   * Гауссово сглаживание ЦМД — тот же фильтр и та же семантика, что у ЦМР
+   * (backend: CHMConfig.smooth / smooth_sigma / smooth_order / smooth_window →
+   * sima_dem_core.raster.smooth.gauss_smooth). sigma умножается на разрешение
+   * растра. Сглаженный растр пишется рядом с исходным, не заменяя его.
+   * Экспертные поля действуют при smoothing_preset='custom'.
+   */
   smoothing: {
+    enabled: boolean
     sigma: number
     order: number
     window: number

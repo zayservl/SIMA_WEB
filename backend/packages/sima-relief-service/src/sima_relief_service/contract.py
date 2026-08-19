@@ -23,7 +23,6 @@ FilterMethod = str  # 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf'
 class FilterParams:
     spm_min: Optional[float] = None
     spm_max: Optional[float] = None
-    spr_num: Optional[int] = None
     spp_min: Optional[float] = None
     spp_max: Optional[float] = None
     mean_k: Optional[int] = None
@@ -50,6 +49,16 @@ class SmoothingParams:
 
 
 @dataclass
+class DtmParams:
+    """Растеризация ЦМР (DTM) — как ground-точки сводятся в ячейку растра.
+
+    Отделено от `DerivativesParams`, где живут параметры заполнения пустот:
+    растеризация выполняется PDAL `writers.gdal` до какой-либо интерполяции.
+    """
+    output_type: str = "idw"  # idw | min | max | mean — writers.gdal
+
+
+@dataclass
 class DsmParams:
     """Параметры построения ЦММ (DSM — цифровая модель поверхности/местности).
 
@@ -63,6 +72,11 @@ class DsmParams:
     fill_holes: bool = True
     max_search_distance: int = 100
     edge_extrapolation_m: float = 5.0  # см. DerivativesParams.edge_extrapolation_m
+    # Заполнение пустот ЦММ — те же три параметра, что у ЦМР, но задаются
+    # независимо: у поверхности с объектами и у земли разная структура пустот.
+    fill_method: str = "laplace"  # laplace | idw
+    fill_passes: int = 3
+    hydro_flatten: bool = True
 
 
 @dataclass
@@ -72,6 +86,7 @@ class DerivativesParams:
     aspect: bool = False
     aspect_res: float = 1.0
     tpi: bool = False
+    tpi_res: float = 10.0  # разрешение выходного растра TPI, м
     tpi_radii: list = field(default_factory=lambda: [270, 810, 2430])
     interpolation: bool = True
     inter_amp: int = 100
@@ -79,6 +94,12 @@ class DerivativesParams:
     # заполнением пустот в ЦМР и при сглаживании. 0 — только внутренние дыры
     # (пустоты у рамки растра остаются незаполненными, историческое поведение).
     edge_extrapolation_m: float = 5.0
+    # Чем и как заполняются пустоты ЦМР (sima_dem_core.raster.holes.fill_voids).
+    fill_method: str = "laplace"  # laplace | idw
+    fill_passes: int = 3
+    # Пустоты-водоёмы получают плоскую отметку вместо интерполяции. На тайлах
+    # без водоёмов может ошибочно выравнивать крупные пустоты съёмки.
+    hydro_flatten: bool = True
 
 
 @dataclass
@@ -102,6 +123,7 @@ class ReliefParams:
     filter: FilterParams = field(default_factory=FilterParams)
     smrf: SmrfParams = field(default_factory=SmrfParams)
     smoothing: SmoothingParams = field(default_factory=SmoothingParams)
+    dtm: DtmParams = field(default_factory=DtmParams)
     dsm: DsmParams = field(default_factory=DsmParams)
     derivatives: DerivativesParams = field(default_factory=DerivativesParams)
     heights: HeightsParams = field(default_factory=HeightsParams)
@@ -144,15 +166,15 @@ def map_smrf_config(p: SmrfParams) -> SMRFConfig:
 
 
 def map_tpi_config(d: DerivativesParams) -> TPIConfig:
-    radii = d.tpi_radii or [270, 810, 2430]
-    return TPIConfig(radii_m=list(radii), res=10.0)
+    radii = d.tpi_radii or DerivativesParams().tpi_radii
+    return TPIConfig(radii_m=list(radii), res=d.tpi_res)
 
 
 def filter_kwargs(p: ReliefParams) -> dict:
     """Нормализация полей фильтра UI-контракта → kwargs конструкторов фильтров.
 
     manual: z_min=spm_min, z_max=spm_max
-    stat: stat_m=mult (σ-кратность), neighbours=spr_num
+    stat: stat_m=mult (σ-кратность)
     range: range_min_pct=spp_min, range_max_pct=spp_max
     outlier: neighbours=mean_k, multiplier=mult
 

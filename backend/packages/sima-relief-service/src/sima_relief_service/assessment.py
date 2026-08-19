@@ -56,6 +56,96 @@ class MaterialAssessment:
     vls: Optional[VlsReport] = None
 
 
+@dataclass
+class CrsCheck:
+    """Результат сверки СК внутри пары АФС+ВЛС.
+
+    Attributes:
+        status: 'match' — системы совпадают; 'mismatch' — различаются, тайл
+            непригоден; 'unknown' — хотя бы у одного файла СК не объявлена,
+            сверить нечем; 'single' — в паре только один материал, сверять не с чем.
+        vls_crs: СК облака как строка (WKT или пусто).
+        afs_crs: СК снимка как строка (WKT или пусто).
+        reason: человекочитаемая причина для 'mismatch' и 'unknown'.
+    """
+
+    status: str
+    vls_crs: str = ""
+    afs_crs: str = ""
+    reason: Optional[str] = None
+
+    @property
+    def blocking(self) -> bool:
+        """Расхождение СК — единственный статус, при котором тайл не берётся в работу."""
+        return self.status == "mismatch"
+
+
+def _crs_label(crs_text: str) -> str:
+    """Короткое имя СК для сообщений: EPSG-код, иначе имя, иначе «не объявлена»."""
+    if not crs_text:
+        return "не объявлена"
+    try:
+        crs = CRS.from_user_input(crs_text)
+    except Exception:  # noqa: BLE001
+        return crs_text[:60]
+    code = crs.to_epsg()
+    return f"EPSG:{code}" if code else (crs.name or crs_text[:60])
+
+
+def crs_equivalent(a: str, b: str) -> bool:
+    """Совпадают ли две СК по существу.
+
+    Строковое сравнение непригодно: одна и та же система приходит из GeoTIFF и
+    из LAS разными WKT (разный порядок ключей, разные версии стандарта, EPSG-код
+    против полного описания). Сравнение ведёт pyproj по семантике; при неразборном
+    WKT — откат на сравнение нормализованных строк.
+    """
+    if not a or not b:
+        return False
+    try:
+        return CRS.from_user_input(a) == CRS.from_user_input(b)
+    except Exception:  # noqa: BLE001
+        return " ".join(a.split()) == " ".join(b.split())
+
+
+def check_pair_crs(vls_path: Optional[str], afs_path: Optional[str]) -> CrsCheck:
+    """Сверить СК облака и снимка одной пары тайлов.
+
+    Приведения координат в конвейере нет (см. README, раздел «Координаты»),
+    поэтому пара с разными СК даст молча смещённый результат — такие тайлы
+    отбраковываются до расчёта.
+    """
+    if not vls_path or not afs_path:
+        return CrsCheck(status="single")
+
+    vls_crs = afs_crs = ""
+    problems: list[str] = []
+    try:
+        with rasterio.open(afs_path) as src:
+            afs_crs = src.crs.to_wkt() if src.crs is not None else ""
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"АФС не читается: {e}")
+    try:
+        crs_obj = laspy.read(vls_path).header.parse_crs()
+        vls_crs = crs_obj.to_wkt() if crs_obj is not None else ""
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"ВЛС не читается: {e}")
+
+    if problems:
+        return CrsCheck("unknown", vls_crs, afs_crs, "; ".join(problems))
+    if not vls_crs or not afs_crs:
+        missing = "ВЛС" if not vls_crs else "АФС"
+        return CrsCheck("unknown", vls_crs, afs_crs,
+                        f"СК не объявлена в {missing}; сверка невозможна")
+    if crs_equivalent(vls_crs, afs_crs):
+        return CrsCheck("match", vls_crs, afs_crs)
+    return CrsCheck(
+        "mismatch", vls_crs, afs_crs,
+        f"СК не совпадают: ВЛС {_crs_label(vls_crs)}, АФС {_crs_label(afs_crs)}; "
+        "приведение координат не выполняется",
+    )
+
+
 def _geod_area_km2(crs: CRS, xmin: float, ymin: float, xmax: float, ymax: float) -> float:
     """Площадь bbox в кв.км с учётом CRS."""
     try:

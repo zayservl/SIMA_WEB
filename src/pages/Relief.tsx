@@ -9,7 +9,7 @@ import { Checkbox, Radio, NumberInput, Field, InfoHint, Select } from '@/compone
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ReliefParams, Job, SmoothingPreset, FilterMethod } from '@/api/types'
+import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
 import { checkDependencies } from '@/lib/dependencies'
 
 const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
@@ -31,6 +31,7 @@ function withDefaults(rp?: ReliefParams): ReliefParams {
     filter: { ...d.filter, ...rp.filter },
     smrf: { ...d.smrf, ...rp.smrf },
     smoothing: { ...d.smoothing, ...rp.smoothing },
+    dtm: { ...d.dtm, ...rp.dtm },
     dsm: { ...d.dsm, ...rp.dsm },
     derivatives: { ...d.derivatives, ...rp.derivatives },
     heights: { ...d.heights, ...rp.heights },
@@ -38,37 +39,32 @@ function withDefaults(rp?: ReliefParams): ReliefParams {
   }
 }
 
-// Один слой в блоке «Интерполяция и экстраполяция». Параметры задаются
-// независимо для ЦМР, карты уклонов и карты экспозиций.
-function InterpolationBlock({ title, hint, enabled, amp, edge, disabled, disabledHint, onChange }: {
-  title: string
-  hint: string
-  enabled: boolean
-  amp: number
-  edge: number
-  disabled?: boolean
-  disabledHint?: string
-  onChange: (patch: { enabled?: boolean; amp?: number; edge?: number }) => void
+// Параметры механизма заполнения пустот (backend: holes.fill_voids). Одинаковый
+// набор у ЦМР и ЦММ, поэтому вынесен в общий блок.
+function VoidFillControls({ method, passes, hydro, onChange }: {
+  method: VoidFillMethod
+  passes: number
+  hydro: boolean
+  onChange: (patch: { method?: VoidFillMethod; passes?: number; hydro?: boolean }) => void
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 p-3">
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Метод заполнения" tooltip="laplace — решение уравнения Лапласа в пустоте: поверхность гладкая по построению. idw — GDALFillNodata: быстрее, но даёт радиальные лучи внутрь крупных пустот и не дотягивается дальше радиуса поиска.">
+          <Select value={method} onChange={(e) => onChange({ method: e.target.value as VoidFillMethod })}>
+            <option value="laplace">laplace (гладко)</option>
+            <option value="idw">idw (быстро)</option>
+          </Select>
+        </Field>
+        <Field label="Проходов заполнения" tooltip="Маска пустот пересчитывается после каждого прохода: часть пустот замыкается в дыру только после заполнения соседних. 1 — однопроходное поведение легаси.">
+          <NumberInput value={passes} min={1} onChange={(v) => onChange({ passes: v })} />
+        </Field>
+      </div>
       <span className="inline-flex items-center gap-1.5">
-        <Checkbox checked={enabled} onChange={(v) => onChange({ enabled: v })} label={title} disabled={disabled} />
-        <InfoHint text={hint} />
+        <Checkbox checked={hydro} onChange={(v) => onChange({ hydro: v })} label="Гидровыравнивание водоёмов" />
+        <InfoHint text="Пустоты, распознанные как водоёмы, получают плоскую отметку вместо интерполяции (3DEP hydro-flattening). На тайлах без водоёмов может ошибочно выровнять крупную пустоту съёмки и внести ошибку в метры." />
       </span>
-      {disabled ? (
-        <p className="hint-base mt-2">{disabledHint}</p>
-      ) : (
-        <div className={`mt-2 space-y-3 ${enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-          <Field label="Амплитуда интерполяции" tooltip="inter_amp — радиус поиска значений при заполнении пустот обратно взвешенным расстоянием (IDW).">
-            <NumberInput value={amp} step={0.1} min={0} onChange={(v) => onChange({ amp: v })} />
-          </Field>
-          <Field label="Экстраполяция края, м" tooltip="На сколько метров допустимо выйти за границу валидной области. 0 — заполнять только внутренние дыры: пустоты, касающиеся рамки растра, остаются незаполненными.">
-            <NumberInput value={edge} step={1} min={0} onChange={(v) => onChange({ edge: v })} />
-          </Field>
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
@@ -242,6 +238,34 @@ export default function Relief() {
         </CardPad>
       </Card>
 
+      {/* ЦМР — основной выход модуля. Растеризация выполняется до заполнения
+          пустот, поэтому вынесена отдельно от блока «Интерполяция». */}
+      <Card>
+        <CardPad>
+          <Accordion title="Цифровая модель рельефа" badge="ЦМР">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Агрегация точек"
+                tooltip="Как высоты ground-точек сводятся в ячейку растра (writers.gdal): idw — обратно взвешенное расстояние (умолчание сервиса), min — нижняя точка, max — верхняя, mean — среднее."
+              >
+                <Select
+                  value={p.dtm.output_type}
+                  onChange={(e) => set('dtm', { ...p.dtm, output_type: e.target.value as ReliefParams['dtm']['output_type'] })}
+                >
+                  <option value="idw">idw (взвешенное)</option>
+                  <option value="min">min (нижняя точка)</option>
+                  <option value="max">max (верхняя точка)</option>
+                  <option value="mean">mean (среднее)</option>
+                </Select>
+              </Field>
+            </div>
+            <p className="hint-base mt-3">
+              Заполнение пустот ЦМР задаётся ниже, в блоке «Интерполяция и экстраполяция».
+            </p>
+          </Accordion>
+        </CardPad>
+      </Card>
+
       <div className="grid gap-5 lg:grid-cols-2">
         {/* ЦММ — второй основной выход модуля, вход «Древостоя» */}
         <Card>
@@ -294,6 +318,17 @@ export default function Relief() {
                       className="w-28"
                     />
                   </div>
+                  <VoidFillControls
+                    method={p.dsm.fill_method}
+                    passes={p.dsm.fill_passes}
+                    hydro={p.dsm.hydro_flatten}
+                    onChange={(patch) => set('dsm', {
+                      ...p.dsm,
+                      ...(patch.method !== undefined && { fill_method: patch.method }),
+                      ...(patch.passes !== undefined && { fill_passes: patch.passes }),
+                      ...(patch.hydro !== undefined && { hydro_flatten: patch.hydro }),
+                    })}
+                  />
                 </div>
               </div>
             </Accordion>
@@ -355,54 +390,47 @@ export default function Relief() {
         </Card>
       </div>
 
-      {/* Интерполяция и экстраполяция — раздельно по выходам */}
+      {/* Заполнение пустот ЦМР — единственный слой, где оно выполняется:
+          уклоны и экспозиции строятся gdal.DEMProcessing из уже заполненной ЦМР. */}
       <Card>
         <CardPad>
           <Accordion title="Интерполяция и экстраполяция">
-            <div className="grid gap-3 md:grid-cols-3">
-              <InterpolationBlock
-                title="ЦМР"
-                hint="Заполнение пустот ЦМР перед расчётом производных. Выполняется до сглаживания и построения уклонов/экспозиций."
-                enabled={p.derivatives.interpolation}
-                amp={p.derivatives.inter_amp}
-                edge={p.derivatives.edge_extrapolation_m}
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { edge_extrapolation_m: patch.edge }),
-                })}
-              />
-              <InterpolationBlock
-                title="Карта уклонов"
-                hint="Заполнение пустот карты уклонов. Задаётся независимо от ЦМР."
-                enabled={p.derivatives.slopes_interpolation}
-                amp={p.derivatives.slopes_inter_amp}
-                edge={p.derivatives.slopes_edge_extrapolation_m}
-                disabled={!p.derivatives.slopes}
-                disabledHint="Карта уклонов выключена в блоке «Производные слои»"
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { slopes_interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { slopes_inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { slopes_edge_extrapolation_m: patch.edge }),
-                })}
-              />
-              <InterpolationBlock
-                title="Карта экспозиций"
-                hint="Заполнение пустот карты экспозиций. Задаётся независимо от ЦМР."
-                enabled={p.derivatives.aspect_interpolation}
-                amp={p.derivatives.aspect_inter_amp}
-                edge={p.derivatives.aspect_edge_extrapolation_m}
-                disabled={!p.derivatives.aspect}
-                disabledHint="Карта экспозиций выключена в блоке «Производные слои»"
-                onChange={(patch) => set('derivatives', {
-                  ...p.derivatives,
-                  ...(patch.enabled !== undefined && { aspect_interpolation: patch.enabled }),
-                  ...(patch.amp !== undefined && { aspect_inter_amp: patch.amp }),
-                  ...(patch.edge !== undefined && { aspect_edge_extrapolation_m: patch.edge }),
-                })}
-              />
+            <div className="max-w-md space-y-3">
+              <p className="hint-base">
+                Заполнение пустот ЦМР выполняется до сглаживания и до построения производных,
+                поэтому уклоны, экспозиции и TPI наследуют его результат.
+              </p>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <span className="inline-flex items-center gap-1.5">
+                  <Checkbox
+                    checked={p.derivatives.interpolation}
+                    onChange={(v) => set('derivatives', { ...p.derivatives, interpolation: v })}
+                    label="Заполнять пустоты ЦМР"
+                  />
+                  <InfoHint text="Заполняются внутренние дыры и пустоты не далее заданной экстраполяции от данных. Область, куда съёмка не заходила, остаётся пустой намеренно." />
+                </span>
+                <div className={`mt-2 space-y-3 ${p.derivatives.interpolation ? '' : 'opacity-40 pointer-events-none'}`}>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Амплитуда интерполяции" tooltip="inter_amp — радиус поиска значений при заполнении пустот обратно взвешенным расстоянием (IDW).">
+                      <NumberInput value={p.derivatives.inter_amp} step={0.1} min={0} onChange={(v) => set('derivatives', { ...p.derivatives, inter_amp: v })} />
+                    </Field>
+                    <Field label="Экстраполяция края, м" tooltip="На сколько метров допустимо выйти за границу валидной области. 0 — заполнять только внутренние дыры: пустоты, касающиеся рамки растра, остаются незаполненными.">
+                      <NumberInput value={p.derivatives.edge_extrapolation_m} step={1} min={0} onChange={(v) => set('derivatives', { ...p.derivatives, edge_extrapolation_m: v })} />
+                    </Field>
+                  </div>
+                  <VoidFillControls
+                    method={p.derivatives.fill_method}
+                    passes={p.derivatives.fill_passes}
+                    hydro={p.derivatives.hydro_flatten}
+                    onChange={(patch) => set('derivatives', {
+                      ...p.derivatives,
+                      ...(patch.method !== undefined && { fill_method: patch.method }),
+                      ...(patch.passes !== undefined && { fill_passes: patch.passes }),
+                      ...(patch.hydro !== undefined && { hydro_flatten: patch.hydro }),
+                    })}
+                  />
+                </div>
+              </div>
             </div>
           </Accordion>
         </CardPad>

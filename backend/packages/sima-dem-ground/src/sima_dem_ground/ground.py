@@ -31,6 +31,9 @@ class SMRFConfig:
     threshold: float = 0.45
     scalar: float = 1.2
     returns: list = field(default_factory=lambda: ["first", "last", "intermediate", "only"])
+    # Порог SMRF в cut-режиме: единственный параметр, который легаси задавало
+    # в упрощённом варианте (`cut_smrf`), остальные брались по умолчанию PDAL.
+    cut_threshold: float = 3.0
 
     def to_dict(self) -> dict:
         """Словарь параметров для filters.smrf в полном режиме."""
@@ -39,7 +42,7 @@ class SMRFConfig:
 
     def to_cut_dict(self) -> dict:
         """Словарь параметров для filters.smrf в cut-режиме."""
-        return {"type": "filters.smrf", "threshold": 3, "returns": self.returns}
+        return {"type": "filters.smrf", "threshold": self.cut_threshold, "returns": self.returns}
 
 
 @dataclass
@@ -63,6 +66,11 @@ class FillConfig:
     # поведение выбрасывало все пустоты, касающиеся рамки растра, даже
     # вплотную к данным. См. sima_dem_core.raster.holes.
     edge_extrapolation_m: float = 5.0
+    # Сохранять рядом с растром маску измеренных ячеек `<stem>_dem_measured.tif`
+    # (uint8: 1 — значение получено растеризацией точек, 0 — заполнено). После
+    # заполнения пустот отличить одно от другого по самому растру уже нельзя,
+    # а для оценки точности и для отчёта заказчику это разные величины.
+    save_measured_mask: bool = False
 
 
 @dataclass
@@ -80,8 +88,18 @@ def _fix_returns_stage() -> dict:
         "ReturnNumber = 1 WHERE (ReturnNumber == 0)"]}
 
 
-def _elm_outlier_stages() -> list[dict]:
-    return [{"type": "filters.elm"}, {"type": "filters.outlier"}]
+def _elm_outlier_stages(elm: bool = True, outlier: bool = True) -> list[dict]:
+    """Стадии отсева шума перед классификацией земли.
+
+    Оба фильтра отключаемы: контракт (`SmrfParams.elm` / `SmrfParams.outlier`)
+    даёт их как самостоятельные флаги.
+    """
+    stages: list[dict] = []
+    if elm:
+        stages.append({"type": "filters.elm"})
+    if outlier:
+        stages.append({"type": "filters.outlier"})
+    return stages
 
 
 def _writers_gdal_stage(filename: str, cfg: RasterOutputConfig, resolution: float) -> dict:
@@ -107,10 +125,13 @@ class GroundProcessing:
         smrf: Optional[SMRFConfig] = None,
         fill: Optional[FillConfig] = None,
         raster_out: Optional[RasterOutputConfig] = None,
+        elm: bool = True,
+        outlier: bool = True,
     ) -> None:
         """Инициализация параметров обработки точек в ЦМР."""
         self.raster: list[str] = []
         self.classified_ground: Optional[str] = None
+        self.measured_mask: Optional[str] = None  # путь маски измеренных ячеек
         self.water_levels: list[float] = []   # отметки гидровыравненных водоёмов, м
         self.aoi = aoi
         self.output_folder = str(output)
@@ -120,6 +141,8 @@ class GroundProcessing:
         self.is_CRS_EPSG = is_CRS_EPSG if is_CRS_EPSG is not None else self._detect_crs_is_epsg(crs)
         self.cut_smrf = cut_smrf
         self.save_ground_las = save_ground_las
+        self.elm = elm
+        self.outlier = outlier
         self.smrf = smrf or SMRFConfig()
         self.fill = fill or FillConfig(max_search_distance=interpol_dist)
         self.raster_out = raster_out or RasterOutputConfig()
@@ -158,7 +181,7 @@ class GroundProcessing:
             {"type": "filters.assign", "assignment": "Classification[:]=0"},
         ]
         pipeline += self._maybe_crop_stage()
-        pipeline += _elm_outlier_stages()
+        pipeline += _elm_outlier_stages(self.elm, self.outlier)
         pipeline.append(smrf_stage)
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
@@ -181,7 +204,7 @@ class GroundProcessing:
         pipeline += self._maybe_crop_stage()
         # elm/outlier должны отработать до финального range-отбора Classification==2,
         # иначе точки, помеченные ими как шум (класс 7), не отсеиваются перед растеризацией.
-        pipeline += _elm_outlier_stages()
+        pipeline += _elm_outlier_stages(self.elm, self.outlier)
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
         pipeline.append(_writers_gdal_stage(raster, self.raster_out, self.resolution))
@@ -196,7 +219,7 @@ class GroundProcessing:
         ]
         pipeline += self._maybe_crop_stage()
         if not check.is_ground:
-            pipeline += _elm_outlier_stages()
+            pipeline += _elm_outlier_stages(self.elm, self.outlier)
             pipeline.append(self.smrf.to_cut_dict() if self.cut_smrf else self.smrf.to_dict())
         pipeline.append({"type": "filters.range", "limits": "Classification[2:2]"})
         pipeline.append({"type": "filters.sample", "radius": self.resolution})
@@ -204,6 +227,52 @@ class GroundProcessing:
                                      gdaldriver=self.raster_out.gdaldriver)
         pipeline.append(_writers_gdal_stage(raster_path, min_cfg, self.resolution))
         return pipeline
+
+    def _build_coverage_pipeline(self, input_path: str, raster_path: str) -> list[dict]:
+        """Собирает пайплайн растра числа возвратов любого класса.
+
+        Ни SMRF, ни отбора по классам: нужна фактическая освещённость сканером,
+        а не земля. Ячейка без единого возврата — кандидат в водоём (вода не
+        отражает импульс), см. `sima_dem_core.raster.hydro`.
+        """
+        pipeline = [
+            {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
+            _fix_returns_stage(),
+        ]
+        pipeline += self._maybe_crop_stage()
+        cfg = RasterOutputConfig(output_type="count", data_type="float32",
+                                 gdaldriver=self.raster_out.gdaldriver)
+        pipeline.append(_writers_gdal_stage(raster_path, cfg, self.resolution))
+        return pipeline
+
+    def _no_return_mask(self, input_path: str, raster: str) -> Optional[np.ndarray]:
+        """Маска ячеек ЦМР, куда не попало ни одного возврата ВЛС.
+
+        Возвращает None, если растр покрытия построить не удалось — тогда
+        гидровыравнивание просто не выполняется (лучше пустота, чем плоскость
+        не по воде).
+        """
+        cover_raster = raster.replace("_dem.tif", "_coverage.tif")
+        try:
+            self._run_pdal(self._build_coverage_pipeline(input_path, cover_raster))
+            with rasterio.open(raster) as ref:
+                shape, ref_transform = ref.shape, ref.transform
+            with rasterio.open(cover_raster) as src:
+                count = src.read(1)
+                nodata = src.nodata
+                same_grid = (src.shape == shape
+                             and np.allclose(np.asarray(src.transform)[:6],
+                                             np.asarray(ref_transform)[:6]))
+            if not same_grid:
+                return None
+            hit = count > 0
+            if nodata is not None:
+                hit &= count != nodata
+            return ~hit
+        except Exception:  # noqa: BLE001 — вспомогательный растр не должен ронять расчёт
+            return None
+        finally:
+            self._cleanup_temp(cover_raster)
 
     def _fill_from_min_z(self, input_path: str, raster: str) -> None:
         """Заполняет пустоты ЦМР значениями минимальных высот из отдельного растра."""
@@ -277,13 +346,17 @@ class GroundProcessing:
         except Exception as ee:
             print("gdal SetProjection failed:", ee)
 
-    def _interpolate(self, raster: str) -> None:
+    def _interpolate(self, raster: str, input_path: Optional[str] = None) -> None:
         """Интерполирует пустоты растра через fillnodata.
 
         Заполняются внутренние дыры и, если задан `fill.edge_extrapolation_m`,
         пустоты не далее этого расстояния от валидных данных. Проходов —
         `fill.fill_passes`: часть пустот замыкается в дыру только после
         заполнения соседних (см. sima_dem_core.raster.holes.fill_voids).
+
+        При `fill.hydro_flatten` кандидаты в водоёмы ограничиваются ячейками без
+        единого возврата ВЛС: валидная маска ЦМР — редкая сетка ground-ячеек, и
+        без этого ограничения «лакуной» оказывается почти весь лист.
         """
         with rasterio.open(raster) as src:
             profile = src.profile
@@ -294,6 +367,10 @@ class GroundProcessing:
         if nodata is None:
             return
 
+        # Без исходного облака судить о воде нечем — гидровыравнивание пропускается.
+        water = (self._no_return_mask(input_path, raster)
+                 if self.fill.hydro_flatten and input_path else None)
+
         result = fill_voids(
             arr, mask == 255,
             method=self.fill.fill_method,
@@ -303,7 +380,8 @@ class GroundProcessing:
                 self.fill.edge_extrapolation_m, self.resolution),
             max_passes=self.fill.fill_passes,
             resolution_m=self.resolution,
-            hydro_flatten=self.fill.hydro_flatten,
+            hydro_flatten=self.fill.hydro_flatten and water is not None,
+            water=water,
         )
         if not np.any(result.filled):
             return
@@ -311,6 +389,26 @@ class GroundProcessing:
 
         with rasterio.open(raster, "w", **profile) as dest:
             dest.write_band(1, result.array)
+
+    @staticmethod
+    def measured_mask_path(raster: str) -> str:
+        """Путь маски измеренных ячеек рядом с растром."""
+        return raster.replace(".tif", "_measured.tif")
+
+    def _save_measured_mask(self, raster: str) -> Optional[str]:
+        """Снять маску валидных ячеек сразу после растеризации и записать её.
+
+        Вызывается до заполнения пустот: позже отличить измеренную ячейку от
+        достроенной по самому растру невозможно.
+        """
+        with rasterio.open(raster) as src:
+            profile = src.profile
+            mask = (src.read_masks(1) == 255).astype("uint8")
+        out = self.measured_mask_path(raster)
+        profile.update(dtype="uint8", nodata=None, count=1)
+        with rasterio.open(out, "w", **profile) as dst:
+            dst.write(mask, 1)
+        return out
 
     def _get_raster_name(self, path: str, out_path: Optional[str]) -> tuple[str, str]:
         """Формирует пути выходного растра ЦМР и сглаженного растра."""
@@ -332,10 +430,12 @@ class GroundProcessing:
             self._run_pdal(self._build_save_ground_pipeline(path, raster, out_path))
         else:
             self._run_pdal(self._build_ground_pipeline(path, raster, out_path))
+        if self.fill.save_measured_mask:
+            self.measured_mask = self._save_measured_mask(raster)
         if self.fill.fallback_to_min_z:
             self._fill_from_min_z(path, raster)
         if self.interpolate:
-            self._interpolate(raster)
+            self._interpolate(raster, path)
         self.raster.append(raster)
         if crs_wkt:
             self._set_projection(raster, crs_wkt)
