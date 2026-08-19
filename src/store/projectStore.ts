@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Project, Scene, MaterialAssessment, Job, ReliefParams, ForestParams, WaterParams, Tile } from '@/api/types'
 import { generateTiles, newSessionId } from '@/lib/tiles'
+import type { InputTile } from '@/lib/inputTiles'
 
 // Параметры по умолчанию. «Рельеф» отдаёт полный набор выходов — ЦМР, ЦММ,
 // TPI, уклоны и экспозиции включены изначально; сервис гейтит каждый шаг своим
@@ -91,11 +92,14 @@ export const defaultWaterParams: WaterParams = {
 interface ProjectStore {
   projects: Project[]
   assessment: Record<string, MaterialAssessment>
+  /** Каталог входных тайлов по проектам — источник выбора тайлов на вкладках расчётов. */
+  inputTiles: Record<string, InputTile[]>
   jobs: Job[]
   createProject: (name: string) => Project
   updateProject: (projectId: string, patch: Partial<Project>) => void
   updateScene: (projectId: string, patch: Partial<Scene>) => void
   setAssessment: (projectId: string, a: MaterialAssessment) => void
+  setInputTiles: (projectId: string, tiles: InputTile[]) => void
   addJob: (job: Job) => void
   updateJob: (jobId: string, patch: Partial<Job>) => void
   recomputeJob: (jobId: string, tileIds: string[] | undefined, newParams: ReliefParams | ForestParams | WaterParams) => void
@@ -149,6 +153,7 @@ export const useProjectStore = create<ProjectStore>()(
           },
         },
       },
+      inputTiles: {},
       jobs: [],
       createProject: (name) => {
         const p: Project = {
@@ -173,6 +178,7 @@ export const useProjectStore = create<ProjectStore>()(
           ),
         })),
       setAssessment: (projectId, a) => set((s) => ({ assessment: { ...s.assessment, [projectId]: a } })),
+      setInputTiles: (projectId, tiles) => set((s) => ({ inputTiles: { ...s.inputTiles, [projectId]: tiles } })),
       addJob: (job) =>
         set((s) => {
           // Нормализуем задачу: гарантированно есть tiles[], tiles_skipped, session_id.
@@ -287,7 +293,7 @@ export const useProjectStore = create<ProjectStore>()(
     }),
     {
       name: 'sima-project-store',
-      partialize: (s) => ({ projects: s.projects, assessment: s.assessment, jobs: s.jobs }),
+      partialize: (s) => ({ projects: s.projects, assessment: s.assessment, inputTiles: s.inputTiles, jobs: s.jobs }),
     },
   ),
 )

@@ -7,37 +7,10 @@ import { Input, Field, InfoHint } from '@/components/ui/controls'
 import { Badge } from '@/components/ui/badge'
 import { FolderOpen, AlertTriangle, CheckCircle2, XCircle, Layers, Grid3x3 } from 'lucide-react'
 import type { MaterialAssessment } from '@/api/types'
-
-// ---- Потайловая модель входных материалов (Блок Д) -----------------------
-
-interface InputAfs {
-  file: string
-  crs: string
-  vertical_crs?: string
-  resolution_m: number
-  size_mb: number
-}
-interface InputVls {
-  file: string
-  crs: string
-  vertical_crs?: string
-  density_pts_m2: number
-  height_range_m: [number, number]
-  size_mb: number
-  /** Классы ASPRS, присутствующие в файле. Пустой массив — классификации нет. */
-  classes: number[]
-}
-
-interface InputTile {
-  id: string
-  name: string // общий номер пары, напр. tile_001
-  afs: InputAfs | null
-  vls: InputVls | null
-  area_km2: number
-}
-
-const TARGET_CRS = 'EPSG:32637'
-const VERTICAL_CRS = 'EPSG:5705 (Балтийская 1977)'
+import {
+  generateMockInputTiles, CLASS_LABELS, TARGET_CRS,
+  inputMode, type InputTile, type InputMode,
+} from '@/lib/inputTiles'
 
 // Требования к именам входящих файлов и правило спаривания. Единый текст для
 // тултипов у обоих каталогов.
@@ -46,66 +19,6 @@ const NAMING_TOOLTIP =
   'Индекс — шесть цифр с ведущими нулями, регистр расширения не важен. ' +
   'Файлы, для которых не нашлась пара, показываются как неполные и пропускаются при пакетной обработке. ' +
   'Пробелы, кириллица и точки внутри имени не допускаются.'
-
-// Классы ASPRS, используемые конвейером: 2 — земля (вход «Рельефа»),
-// 3-5 — растительность (вход «Древостоя»), 7 — шум.
-const CLASS_LABELS: Record<number, string> = {
-  1: 'не классифицировано',
-  2: 'земля',
-  3: 'низкая растительность',
-  4: 'средняя растительность',
-  5: 'высокая растительность',
-  6: 'здания',
-  7: 'шум',
-}
-
-type InputMode = 'pair' | 'vls-only' | 'afs-only'
-
-// Демо-набор пар ТИФ+ЛАС. Включает: совпадающие пары, пары с несовпадением СК
-// (демонстрация валидации), пару без ВЛС (неполная), файлы с классификацией и без.
-function generateMockInputTiles(mode: InputMode): InputTile[] {
-  const tiles: InputTile[] = []
-  for (let i = 1; i <= 24; i++) {
-    const id = `in-${String(i).padStart(3, '0')}`
-    const name = `tile_${String(i).padStart(3, '0')}`
-    const afsFile = `${String(i * 100).padStart(6, '0')}.tif`
-    const vlsFile = `pt${String(i * 100).padStart(6, '0')}.las`
-    const afsSize = 130 + ((i * 7) % 30)
-    const vlsSize = 115 + ((i * 5) % 25)
-    const density = 4000 + ((i * 37) % 1000)
-    const hMin = +(15 + ((i * 0.5) % 30)).toFixed(2)
-    const hMax = +(950 + ((i * 3) % 200)).toFixed(2)
-
-    let afsCrs = TARGET_CRS
-    // Часть файлов приходит уже классифицированной, часть — сырой.
-    const classes = i % 3 === 0 ? [] : [1, 2, 3, 4, 5]
-    let vls: InputVls | null = {
-      file: vlsFile, crs: TARGET_CRS, vertical_crs: VERTICAL_CRS,
-      density_pts_m2: density, height_range_m: [hMin, hMax], size_mb: vlsSize, classes,
-    }
-    // Система высот в метаданных АФС встречается не всегда.
-    let afs: InputAfs | null = {
-      file: afsFile, crs: afsCrs, vertical_crs: i % 4 === 0 ? undefined : VERTICAL_CRS,
-      resolution_m: 0.14, size_mb: afsSize,
-    }
-
-    if (mode === 'vls-only') {
-      afs = null
-    } else if (mode === 'afs-only') {
-      vls = null
-    } else if (i === 21 || i === 22) {
-      // СК не совпадает внутри пары → валидация подсветит это
-      afsCrs = 'EPSG:4326'
-      afs = { ...afs!, crs: afsCrs }
-    } else if (i === 23) {
-      // Неполная пара: нет ВЛС
-      vls = null
-    }
-
-    tiles.push({ id, name, area_km2: 1.0, afs, vls })
-  }
-  return tiles
-}
 
 type PairStatus = 'ok' | 'reproject' | 'mismatch' | 'incomplete' | 'vls_only' | 'afs_only'
 
@@ -194,16 +107,20 @@ const UNKNOWN = <span className="text-amber-600">не указана</span>
 export default function Upload() {
   const { projectId } = useParams()
   const setAssessment = useProjectStore((s) => s.setAssessment)
+  const setInputTiles = useProjectStore((s) => s.setInputTiles)
   const updateScene = useProjectStore((s) => s.updateScene)
   const projects = useProjectStore((s) => s.projects)
   const project = projects.find((p) => p.id === projectId)
 
   const [afsDir, setAfsDir] = useState(project?.scene.afs_dir || '')
   const [vlsDir, setVlsDir] = useState(project?.scene.vls_dir || '')
-  const [tiles, setTiles] = useState<InputTile[]>([])
-  const [assessed, setAssessed] = useState(false)
-  const [detectedCrs, setDetectedCrs] = useState<string | null>(null)
-  const [mode, setMode] = useState<InputMode>('pair')
+  const storedTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+  const [tiles, setTiles] = useState<InputTile[]>(() => storedTiles ?? [])
+  const [assessed, setAssessed] = useState(() => !!storedTiles?.length)
+  const [detectedCrs, setDetectedCrs] = useState<string | null>(
+    () => storedTiles?.find((t) => t.afs)?.afs?.crs ?? storedTiles?.find((t) => t.vls)?.vls?.crs ?? null,
+  )
+  const [mode, setMode] = useState<InputMode>(() => (storedTiles?.length ? inputMode(storedTiles) : 'pair'))
 
   const reproject = project?.scene.reproject ?? true
   const targetCrs = project?.scene.target_crs || TARGET_CRS
@@ -216,6 +133,7 @@ export default function Upload() {
     setMode(nextMode)
     const generated = generateMockInputTiles(nextMode)
     setTiles(generated)
+    setInputTiles(projectId, generated)
     setAssessment(projectId, aggregate(generated))
 
     // СК из первого валидного тайла: АФС приоритетнее ВЛС.
