@@ -235,12 +235,58 @@ class TestHydroFlattening:
                             min_water_area_m2=1.0)
         assert result.water[void].all()
 
-    def test_explicit_water_mask_skips_area_check(self):
-        """С готовой маской (брейклайны) отбор по площади не нужен."""
-        arr, valid, small = self._lake(side=20)
+    def test_water_mask_restricts_candidates_but_keeps_area_threshold(self):
+        """Маска сужает кандидатов, но порог площади продолжает действовать."""
+        arr, valid, small = self._lake(side=20)   # 400 м² — ниже порога 3DEP
         result = fill_voids(arr, valid, hydro_flatten=True, resolution_m=1.0,
                             water=small)
+        assert not result.water.any()
+
+    def test_explicit_breaklines_disable_area_threshold(self):
+        """С готовыми брейклайнами отбор по площади отключается явно."""
+        arr, valid, small = self._lake(side=20)
+        result = fill_voids(arr, valid, hydro_flatten=True, resolution_m=1.0,
+                            water=small, min_water_area_m2=0.0)
         assert result.water[small].all()
+
+    def test_sparse_measured_net_is_not_flattened_with_coverage_mask(self):
+        """Редкая сетка ground-ячеек ЦМР водоёмом не считается.
+
+        Регрессия: без ограничения по возвратам вся площадь между измеренными
+        ячейками — одна связная «лакуна» больше 0.8 га, и она выравнивалась в
+        одну плоскость по нижнему квантилю окаймления. На реальных листах это
+        давало провалы до 8 м относительно эталона.
+        """
+        size = 200
+        rows, cols = np.mgrid[0:size, 0:size]
+        arr = (100.0 + rows * 0.05).astype("float32")     # склон 10 м на лист
+        valid = ((rows % 5 == 0) & (cols % 5 == 0))       # измерено 4 % ячеек
+        arr[~valid] = NODATA
+
+        # Возвраты есть везде (лес), поэтому кандидатов в воду нет.
+        no_returns = np.zeros((size, size), dtype=bool)
+        result = fill_voids(arr, valid, hydro_flatten=True, resolution_m=1.0,
+                            water=no_returns, max_extrapolation_px=5.0)
+        assert not result.water.any()
+        filled = result.filled & np.isfinite(result.array)
+        assert filled.any()
+        # Заполнение идёт по соседям, а не одной плоскостью низины.
+        assert result.array[filled].max() - result.array[filled].min() > 5.0
+
+    def test_no_return_blob_inside_net_is_flattened(self):
+        """Связная область без возвратов нужного размера — водоём."""
+        size = 200
+        rows, cols = np.mgrid[0:size, 0:size]
+        arr = (100.0 + rows * 0.05).astype("float32")
+        valid = ((rows % 5 == 0) & (cols % 5 == 0))
+        lake = (rows >= 60) & (rows < 160) & (cols >= 60) & (cols < 160)   # 1 га
+        valid &= ~lake
+        arr[~valid] = NODATA
+
+        result = fill_voids(arr, valid, hydro_flatten=True, resolution_m=1.0,
+                            water=lake, max_extrapolation_px=5.0)
+        assert result.water[lake].any()
+        assert len(result.water_levels) == 1
 
     def test_disabled_by_default(self):
         arr, valid, lake = self._lake()

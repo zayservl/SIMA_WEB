@@ -176,20 +176,42 @@ def restore_absolute(tlo_path: str, reference_path: str, out_path: str) -> str:
 
 # --- 3. Параметры расчёта (совпадают с relief_demo.ipynb) ---------------
 
-def default_params(crs_wkt: str, resolution: float = 1.0) -> ReliefParams:
-    """Параметры Q3, выровненные с легаси-прототипом и relief_demo.ipynb."""
+# Заполнение пустот: единственная настройка — чем интерполировать.
+#   "laplace" — гармоническая интерполяция, гладкая, без лучей;
+#   "idw"     — GDALFillNodata, историческое поведение легаси.
+# Заполняются все пустоты растра, включая приграничные: `edge_extrapolation_m`
+# заведомо больше листа. Гидровыравнивание выключено — эталонные ЦМР датасета
+# воду тоже интерполировали, и плоская отметка расходилась бы с ними до 1.7 м.
+DEFAULT_FILL_METHOD = "laplace"
+FILL_ALL_VOIDS_M = 10_000.0     # допуск экстраполяции, м — больше номенклатурного листа
+FILL_SEARCH_PX = 400            # радиус поиска для "idw", px
+
+
+def default_params(crs_wkt: str, resolution: float = 1.0,
+                   fill_method: str = DEFAULT_FILL_METHOD) -> ReliefParams:
+    """Параметры Q3, выровненные с легаси-прототипом и relief_demo.ipynb.
+
+    Args:
+        fill_method: чем заполнять пустоты — "laplace" или "idw".
+    """
+    if fill_method not in ("laplace", "idw"):
+        raise ValueError(f"fill_method: ожидается 'laplace' или 'idw', получено {fill_method!r}")
     return ReliefParams(
         target_crs=crs_wkt,
         filter_method="smrf",
         smrf=SmrfParams(slope=0.2, window=16, threshold=0.45, scalar=1.2),
         smoothing=SmoothingParams(enabled=True, sigma=2.0, order=0, window=5),
-        dsm=DsmParams(enabled=True, output_type="max", interpolate=True, fill_holes=True),
+        dsm=DsmParams(enabled=True, output_type="max", interpolate=True, fill_holes=True,
+                      max_search_distance=FILL_SEARCH_PX,
+                      edge_extrapolation_m=FILL_ALL_VOIDS_M,
+                      fill_method=fill_method, hydro_flatten=False),
         derivatives=DerivativesParams(
             slopes=True, slopes_res=resolution,
             aspect=True, aspect_res=resolution,
             tpi=True, tpi_radii=[270, 810, 2430],
-            interpolation=True, inter_amp=100,
-            edge_extrapolation_m=5.0,
+            interpolation=True, inter_amp=FILL_SEARCH_PX,
+            edge_extrapolation_m=FILL_ALL_VOIDS_M,
+            fill_method=fill_method, hydro_flatten=False,
         ),
         vectors=VectorsParams(horizontals=[0.5, 2.0, 5.0, 10.0], tin=True),
         heights=HeightsParams(enabled=True, source="las", min_distance_m=10.0),
@@ -316,6 +338,85 @@ def raster_stats(path: str) -> dict:
     }
 
 
+def las_coverage(las_path: str, ref_path: str,
+                 return_masks: bool = False) -> dict:
+    """Покрытие листа облаком ВЛС — на сетке эталона.
+
+    Отвечает на вопрос, чем ограничена полнота растра: охватом съёмки или
+    расчётом. Считается по самому облаку, до всякой растеризации.
+
+    Returns:
+        Доли в процентах от площади листа (рамки эталона):
+        `hit_pct` — ячейки, куда попала хотя бы одна точка любого класса;
+        `ground_pct` — то же по ground-точкам (Classification == 2);
+        `bbox_pct` — доля рамки, накрытая габаритом облака;
+        плюс `n_points`, `n_ground`, `ground_share_pct`, `density_pts_m2`.
+        При `return_masks` дополнительно `hit_mask` / `ground_mask`.
+    """
+    with rasterio.open(ref_path) as ref:
+        h, w = ref.shape
+        inv = ~ref.transform
+        b = ref.bounds
+        cell_m2 = abs(ref.transform.a * ref.transform.e)
+
+    las = laspy.read(las_path)
+    x = np.asarray(las.x)
+    y = np.asarray(las.y)
+    cls = np.asarray(las.classification)
+
+    cols, rows = inv * (x, y)
+    rows = np.floor(rows).astype(int)
+    cols = np.floor(cols).astype(int)
+    inside = (rows >= 0) & (rows < h) & (cols >= 0) & (cols < w)
+
+    hit = np.zeros((h, w), dtype=bool)
+    hit[rows[inside], cols[inside]] = True
+    g = inside & (cls == 2)
+    ground = np.zeros((h, w), dtype=bool)
+    ground[rows[g], cols[g]] = True
+
+    n_cells = h * w
+    x_in = x[np.isfinite(x)]
+    y_in = y[np.isfinite(y)]
+    bbox_pct = 0.0
+    if x_in.size:
+        ox = max(0.0, min(x_in.max(), b.right) - max(x_in.min(), b.left))
+        oy = max(0.0, min(y_in.max(), b.top) - max(y_in.min(), b.bottom))
+        bbox_pct = 100.0 * ox * oy / (n_cells * cell_m2) if n_cells else 0.0
+
+    out = {
+        "n_points": int(x.size),
+        "n_ground": int((cls == 2).sum()),
+        "ground_share_pct": 100.0 * float((cls == 2).sum()) / x.size if x.size else 0.0,
+        "hit_pct": 100.0 * float(hit.sum()) / n_cells,
+        "ground_pct": 100.0 * float(ground.sum()) / n_cells,
+        "bbox_pct": min(bbox_pct, 100.0),
+        "density_pts_m2": float(x.size) / (n_cells * cell_m2) if n_cells else 0.0,
+    }
+    if return_masks:
+        out["hit_mask"] = hit
+        out["ground_mask"] = ground
+    return out
+
+
+def quiet_gdal() -> None:
+    """Убрать из вывода технический шум GDAL.
+
+    ОФП датасета несут битые IFD внешних пирамид: при закрытии производных
+    растров GDAL печатает в stderr `TIFFReadDirectory: Failed to read directory`.
+    На данные это не влияет (растры читаются и проверяются), но в демонстрации
+    выглядит как ошибка расчёта.
+    """
+    import logging
+
+    from osgeo import gdal
+
+    gdal.PushErrorHandler("CPLQuietErrorHandler")
+    logging.getLogger("rasterio").setLevel(logging.CRITICAL)
+    warnings.filterwarnings("ignore")
+
+
+
 # --- 5. Прогон одного триплета ------------------------------------------
 
 @contextmanager
@@ -332,6 +433,7 @@ def run_triplet(
     out_root: str,
     resolution: float = 1.0,
     keep_outputs: bool = False,
+    fill_method: str = DEFAULT_FILL_METHOD,
 ) -> dict:
     """Прогнать полный конвейер на одном триплете и собрать время + точность."""
     rec: dict = {"name": tri.name, "ofp": tri.ofp, "las": tri.las, "ref": tri.ref,
@@ -368,7 +470,7 @@ def run_triplet(
             rec["n_points"] = int(f.header.point_count)
 
         # 1. Конвейер рельефа
-        params = default_params(crs_wkt, resolution)
+        params = default_params(crs_wkt, resolution, fill_method)
         request = ReliefRequest(
             params=params, project_id=f"bench_{tri.name}", resolution=resolution,
             season="summer",
@@ -474,6 +576,7 @@ def run_benchmark(
     keep_outputs: bool = False,
     results_path: Optional[str] = None,
     verbose: bool = True,
+    fill_method: str = DEFAULT_FILL_METHOD,
 ) -> list[dict]:
     """Прогнать бенчмарк по триплетам; результаты пишутся построчно в JSONL."""
     triplets = find_triplets(root)[offset: (offset + limit) if limit else None]
@@ -486,7 +589,7 @@ def run_benchmark(
     with open(results_path, "w", encoding="utf-8") as fh:
         for i, tri in enumerate(triplets, 1):
             t0 = time.perf_counter()
-            rec = run_triplet(tri, work_root, resolution, keep_outputs)
+            rec = run_triplet(tri, work_root, resolution, keep_outputs, fill_method)
             rec["index"] = offset + i
             rec["total_wall_ms"] = (time.perf_counter() - t0) * 1000.0
             records.append(rec)
@@ -521,9 +624,12 @@ def main() -> None:
     ap.add_argument("--resolution", type=float, default=1.0)
     ap.add_argument("--keep-outputs", action="store_true")
     ap.add_argument("--results", default=None)
+    ap.add_argument("--fill-method", default=DEFAULT_FILL_METHOD, choices=("laplace", "idw"))
     args = ap.parse_args()
+    quiet_gdal()      # ОФП датасета несут битые IFD пирамид — шум GDAL к расчёту не относится
     run_benchmark(args.root, args.out, args.limit, args.offset,
-                  args.resolution, args.keep_outputs, args.results)
+                  args.resolution, args.keep_outputs, args.results,
+                  fill_method=args.fill_method)
 
 
 if __name__ == "__main__":

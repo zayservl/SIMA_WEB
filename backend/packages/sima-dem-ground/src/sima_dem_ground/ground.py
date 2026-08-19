@@ -228,6 +228,52 @@ class GroundProcessing:
         pipeline.append(_writers_gdal_stage(raster_path, min_cfg, self.resolution))
         return pipeline
 
+    def _build_coverage_pipeline(self, input_path: str, raster_path: str) -> list[dict]:
+        """Собирает пайплайн растра числа возвратов любого класса.
+
+        Ни SMRF, ни отбора по классам: нужна фактическая освещённость сканером,
+        а не земля. Ячейка без единого возврата — кандидат в водоём (вода не
+        отражает импульс), см. `sima_dem_core.raster.hydro`.
+        """
+        pipeline = [
+            {"type": "readers.las", "filename": input_path, "override_srs": self.crs},
+            _fix_returns_stage(),
+        ]
+        pipeline += self._maybe_crop_stage()
+        cfg = RasterOutputConfig(output_type="count", data_type="float32",
+                                 gdaldriver=self.raster_out.gdaldriver)
+        pipeline.append(_writers_gdal_stage(raster_path, cfg, self.resolution))
+        return pipeline
+
+    def _no_return_mask(self, input_path: str, raster: str) -> Optional[np.ndarray]:
+        """Маска ячеек ЦМР, куда не попало ни одного возврата ВЛС.
+
+        Возвращает None, если растр покрытия построить не удалось — тогда
+        гидровыравнивание просто не выполняется (лучше пустота, чем плоскость
+        не по воде).
+        """
+        cover_raster = raster.replace("_dem.tif", "_coverage.tif")
+        try:
+            self._run_pdal(self._build_coverage_pipeline(input_path, cover_raster))
+            with rasterio.open(raster) as ref:
+                shape, ref_transform = ref.shape, ref.transform
+            with rasterio.open(cover_raster) as src:
+                count = src.read(1)
+                nodata = src.nodata
+                same_grid = (src.shape == shape
+                             and np.allclose(np.asarray(src.transform)[:6],
+                                             np.asarray(ref_transform)[:6]))
+            if not same_grid:
+                return None
+            hit = count > 0
+            if nodata is not None:
+                hit &= count != nodata
+            return ~hit
+        except Exception:  # noqa: BLE001 — вспомогательный растр не должен ронять расчёт
+            return None
+        finally:
+            self._cleanup_temp(cover_raster)
+
     def _fill_from_min_z(self, input_path: str, raster: str) -> None:
         """Заполняет пустоты ЦМР значениями минимальных высот из отдельного растра."""
         min_z_raster = raster.replace("_dem.tif", "_minz_fallback.tif")
@@ -300,13 +346,17 @@ class GroundProcessing:
         except Exception as ee:
             print("gdal SetProjection failed:", ee)
 
-    def _interpolate(self, raster: str) -> None:
+    def _interpolate(self, raster: str, input_path: Optional[str] = None) -> None:
         """Интерполирует пустоты растра через fillnodata.
 
         Заполняются внутренние дыры и, если задан `fill.edge_extrapolation_m`,
         пустоты не далее этого расстояния от валидных данных. Проходов —
         `fill.fill_passes`: часть пустот замыкается в дыру только после
         заполнения соседних (см. sima_dem_core.raster.holes.fill_voids).
+
+        При `fill.hydro_flatten` кандидаты в водоёмы ограничиваются ячейками без
+        единого возврата ВЛС: валидная маска ЦМР — редкая сетка ground-ячеек, и
+        без этого ограничения «лакуной» оказывается почти весь лист.
         """
         with rasterio.open(raster) as src:
             profile = src.profile
@@ -317,6 +367,10 @@ class GroundProcessing:
         if nodata is None:
             return
 
+        # Без исходного облака судить о воде нечем — гидровыравнивание пропускается.
+        water = (self._no_return_mask(input_path, raster)
+                 if self.fill.hydro_flatten and input_path else None)
+
         result = fill_voids(
             arr, mask == 255,
             method=self.fill.fill_method,
@@ -326,7 +380,8 @@ class GroundProcessing:
                 self.fill.edge_extrapolation_m, self.resolution),
             max_passes=self.fill.fill_passes,
             resolution_m=self.resolution,
-            hydro_flatten=self.fill.hydro_flatten,
+            hydro_flatten=self.fill.hydro_flatten and water is not None,
+            water=water,
         )
         if not np.any(result.filled):
             return
@@ -380,7 +435,7 @@ class GroundProcessing:
         if self.fill.fallback_to_min_z:
             self._fill_from_min_z(path, raster)
         if self.interpolate:
-            self._interpolate(raster)
+            self._interpolate(raster, path)
         self.raster.append(raster)
         if crs_wkt:
             self._set_projection(raster, crs_wkt)
