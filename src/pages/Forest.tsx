@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useProjectStore, defaultForestParams } from '@/store/projectStore'
-import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,33 +8,11 @@ import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
+import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
 import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 import { withPlural, TILES } from '@/lib/plural'
-
-// Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
-// блока не задаются — их подбирает модель, поля гасятся вызывающим кодом.
-// «Категория рубки» переключателя не имеет: она считается только алгоритмически.
-function ParamModeSwitch({ mode, onChange, aiLabel = 'ИИ', algorithmicLabel = 'Алгоритмически', aiHint }: {
-  mode: ParamMode
-  onChange: (v: ParamMode) => void
-  aiLabel?: string
-  algorithmicLabel?: string
-  aiHint?: string
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <span className="label-base">Определение параметров</span>
-        <Radio checked={mode === 'ai'} onChange={() => onChange('ai')} label={aiLabel} />
-        <Radio checked={mode === 'algorithmic'} onChange={() => onChange('algorithmic')} label={algorithmicLabel} />
-      </div>
-      {mode === 'ai' && aiHint && <p className="hint-base mt-1">{aiHint}</p>}
-    </div>
-  )
-}
 
 // Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
 // изменения контракта, поэтому недостающие поля добираем из умолчаний.
@@ -64,7 +41,6 @@ export default function Forest() {
   const { projectId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const { settings } = useSettingsStore()
   const addJob = useProjectStore((s) => s.addJob)
   const jobs = useProjectStore((s) => s.jobs)
   const [p, setP] = useState<ForestParams>(() =>
@@ -211,6 +187,8 @@ export default function Forest() {
         resolutionPreset={p.output_resolution_preset}
         onSmoothingChange={handleSmoothingPreset}
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
+        customResolutionM={p.output_resolution_m}
+        onCustomResolutionChange={(v) => set('output_resolution_m', v)}
         customSmoothing={p.smoothing}
         onCustomSmoothingChange={(patch) => setP((s) => ({ ...s, smoothing: { ...s.smoothing, ...patch } }))}
       >
@@ -281,21 +259,23 @@ export default function Forest() {
             <div className="space-y-4">
               <Checkbox checked={p.cmd.enabled} onChange={(v) => set('cmd', { ...p.cmd, enabled: v })} label="Формировать ЦМД" />
               <div className={`space-y-4 ${p.cmd.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-                <ParamModeSwitch
-                  mode={p.cmd.mode}
-                  onChange={(mode) => set('cmd', { ...p.cmd, mode })}
-                  aiHint="Пороги ярусов и окно фильтра подбирает модель"
-                />
-                <div className={`space-y-4 ${p.cmd.mode === 'algorithmic' ? '' : 'opacity-40 pointer-events-none'}`}>
+                <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <Field label="Агрегация точек" tooltip="Как высоты точек сводятся в ячейку полога: max — верхняя точка (поведение легаси), mean — среднее, idw — взвешенное по расстоянию.">
+                      <Select
+                        value={p.cmd.output_type}
+                        onChange={(e) => set('cmd', { ...p.cmd, output_type: e.target.value as 'max' | 'mean' | 'idw' })}
+                      >
+                        <option value="max">max (верхняя точка)</option>
+                        <option value="mean">mean (среднее)</option>
+                        <option value="idw">idw (взвешенное)</option>
+                      </Select>
+                    </Field>
                     <Field label="Поверхность (м)" tooltip="Высота точек, относимая к поверхности (класс 3). Точки ниже этого порога считаются поверхностью земли.">
                       <NumberInput value={p.cmd.threshold_surface} step={0.1} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_surface: v })} />
                     </Field>
-                    <Field label="Кустарники (м)" tooltip="Верхняя граница кустарникового яруса (класс 4). Выше — древесный ярус (класс 5).">
+                    <Field label="Кустарники (м)" tooltip="Верхняя граница кустарникового яруса (класс 4). Выше — древесный ярус (класс 5). Той же границей разделяются найденные вершины на кустарник и древостой.">
                       <NumberInput value={p.cmd.threshold_shrub} step={0.5} min={0} onChange={(v) => set('cmd', { ...p.cmd, threshold_shrub: v })} />
-                    </Field>
-                    <Field label="Медианный фильтр">
-                      <NumberInput value={p.cmd.median_window} min={0} onChange={(v) => set('cmd', { ...p.cmd, median_window: v })} />
                     </Field>
                   </div>
                 </div>
@@ -370,23 +350,11 @@ export default function Forest() {
                 </div>
               )}
               <div className={`space-y-4 ${detectionEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
-                <ParamModeSwitch
-                  mode={p.detection.mode}
-                  onChange={(mode) => set('detection', { ...p.detection, mode })}
-                  aiLabel="ИИ (нейросеть YOLOv5)"
-                  algorithmicLabel="Алгоритмически (водораздел)"
-                  aiHint="Границы сегментов крон определяет модель"
-                />
+                <p className="hint-base">
+                  Вершины ищутся локальным максимумом, границы крон — водоразделом по поверхности
+                  стоимости. Нейросетевого режима в расчётном ядре нет.
+                </p>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Состояние вегетации">
-                    <Select
-                      value={p.detection.vegetation_state}
-                      onChange={(e) => set('detection', { ...p.detection, vegetation_state: e.target.value as 'active' | 'absent' })}
-                    >
-                      <option value="active">Активная</option>
-                      <option value="absent">Отсутствует</option>
-                    </Select>
-                  </Field>
                   <Field label="Окно поиска вершин крон (м)" tooltip="Минимальное расстояние между соседними деревьями. Прямо определяет число найденных деревьев: чем шире окно, тем меньше вершин. Значение округляется до целого числа ячеек, поэтому фактическое окно зависит от разрешения ЦМД — при 1 м это 2.5 м на сетке 0.5 м и 3 м на сетке 1 м.">
                     <NumberInput
                       value={p.detection.peak_size_m}
@@ -409,9 +377,20 @@ export default function Forest() {
                     <Field label="Максимальная высота, м">
                       <NumberInput value={p.detection.max_height_m} step={1} min={0} onChange={(v) => set('detection', { ...p.detection, max_height_m: v })} />
                     </Field>
-                    <Field label="Сглаживание, пикс" tooltip="Радиус медианного ядра, которым ЦМД сглаживается перед поиском максимумов. 0 — без сглаживания. Высота дерева при этом снимается с несглаженного растра: медианный фильтр срезает макушки.">
+                    <Field label="Сглаживание, пикс" tooltip="Радиус медианного ядра, которым ЦМД сглаживается перед поиском максимумов. 0 — без сглаживания.">
                       <NumberInput value={p.detection.smooth_radius_px} min={0} onChange={(v) => set('detection', { ...p.detection, smooth_radius_px: v })} />
                     </Field>
+                  </div>
+                  <div className="mt-3">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Checkbox
+                        checked={p.detection.height_from_smoothed}
+                        onChange={(v) => set('detection', { ...p.detection, height_from_smoothed: v })}
+                        label="Высоту дерева снимать со сглаженного растра"
+                        disabled={p.detection.smooth_radius_px === 0}
+                      />
+                      <InfoHint text="Поведение легаси СИМА 1.44. Медианный фильтр срезает макушки, поэтому высота занижается: на кроне 23 м радиус 1 пикс даёт 21.8 м. Выключено — высота снимается с исходной ЦМД." />
+                    </span>
                   </div>
                 </div>
 
@@ -482,12 +461,6 @@ export default function Forest() {
                     </Field>
                   </div>
                 </div>
-
-                {p.detection.mode === 'ai' && (
-                  <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                    Каталог весов: <code className="text-slate-700">{settings.model_paths.treecanopy || 'не задан'}</code>
-                  </div>
-                )}
               </div>
             </div>
           </Accordion>

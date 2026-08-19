@@ -126,7 +126,7 @@ export function ModuleHeader({
 
           {/* Разрешение выходного файла */}
           {resolutionPreset && onResolutionChange && (
-            <Field label="Разрешение выходного файла" tooltip={METHOD_TOOLTIPS.resolution} className="w-56">
+            <Field label="Разрешение расчёта" tooltip={METHOD_TOOLTIPS.resolution} className="w-56">
               <Select value={resolutionPreset} onChange={(e) => onResolutionChange(e.target.value as ResolutionPreset)}>
                 {RESOLUTION_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>

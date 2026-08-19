@@ -43,17 +43,18 @@ export const defaultForestParams: ForestParams = {
   // (низкая растительность ≤0.5 м, средняя ≤5 м; экстраполяция края 0 —
   // за границей полога досчитывать нечего).
   cmd: {
-    enabled: true, mode: 'algorithmic', threshold_surface: 0.5, threshold_shrub: 5,
+    enabled: true, output_type: 'max', threshold_surface: 0.5, threshold_shrub: 5,
     channels: { chm: true, intensity: false, density: false },
-    median_window: 3, save_classified_las: false,
+    save_classified_las: false,
     fill: {
       interpolate: true, fill_holes: true, fill_method: 'laplace', fill_passes: 3,
       max_search_distance: 100, edge_extrapolation_m: 0,
     },
   },
   detection: {
-    enabled: true, mode: 'ai', vegetation_state: 'active', peak_size_m: 1,
+    enabled: true, peak_size_m: 1,
     min_height_m: 0.5, max_height_m: 60, smooth_radius_px: 1,
+    height_from_smoothed: false,
     afs_correction: {
       enabled: false, index: 'exg', threshold: 0.05, min_area_px: 0,
       drop_non_vegetation: true, refine_position: true, refine_radius_m: 1.5,
@@ -64,7 +65,7 @@ export const defaultForestParams: ForestParams = {
       intensity: 0, density: 0, texture_window: 3,
     },
   },
-  stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'], height_trim: 0.05 },
+  stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, height_trim: 0.05 },
   // Границы категорий рубки по высоте растительности: 0 — до 1 м, 1 — до 5 м,
   // 2 — до 16 м, 3 — выше. Порог уклона по умолчанию 15°.
   logging_category: {
@@ -74,7 +75,10 @@ export const defaultForestParams: ForestParams = {
   },
   smoothing_preset: 'medium',
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
-  output_resolution_preset: 'native',
+  // Разрешение расчёта ЦМД: 0.5 м — умолчание CHMConfig и значение эксперта
+  // в forest_s3_yuilskiy (СИМА 1.44, Юильский).
+  output_resolution_preset: '0.5m',
+  output_resolution_m: 0.5,
   dsm_source: { kind: 'system' },
   derivatives_source: { kind: 'system' },
 }

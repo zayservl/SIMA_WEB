@@ -265,10 +265,6 @@ export interface ReliefParams {
 
 // ---- Параметры: Лес/Древостой (#11,12,13,16) -----------------------------
 
-// Способ определения параметров блока: моделью (ИИ) или явными правилами.
-// В режиме 'ai' ручные пороги блока не задаются — их подбирает модель.
-export type ParamMode = 'ai' | 'algorithmic'
-
 /**
  * Веса поверхности стоимости водораздела (backend: sima_forest_cmd.CostWeights).
  * Задают, по каким признакам проходит граница между соседними кронами. При
@@ -309,12 +305,12 @@ export interface AfsCorrection {
 export interface ForestParams {
   cmd: {
     enabled: boolean
-    mode: ParamMode
+    /** Как высоты точек сводятся в ячейку полога (backend: CHMConfig.output_type). */
+    output_type: 'max' | 'mean' | 'idw'
     threshold_surface: number
     threshold_shrub: number
     /** Дополнительные каналы ЦМД (backend: CHMConfig.with_intensity/with_density). */
     channels: { chm: boolean; intensity: boolean; density: boolean }
-    median_window: number
     /** Сохранять облако с переклассифицированной по высоте растительностью. */
     save_classified_las: boolean
     /** Заполнение пустот полога (backend: CHMConfig). Гидровыравнивание к ЦМД не применяется. */
@@ -330,8 +326,6 @@ export interface ForestParams {
   detection: {
     /** Детекция крон — опциональный расчёт; от неё зависят статистики по сегментам. */
     enabled: boolean
-    mode: ParamMode
-    vegetation_state: 'active' | 'absent'
     /**
      * Окно поиска вершин крон, м (backend: sima_forest_cmd.detect_tree_tops.window_m).
      * Задаёт минимальное расстояние между соседними деревьями и потому напрямую
@@ -347,6 +341,12 @@ export interface ForestParams {
     max_height_m: number
     /** Радиус медианного сглаживания ЦМД перед поиском вершин, пикс. 0 — без сглаживания. */
     smooth_radius_px: number
+    /**
+     * Снимать высоту дерева со сглаженного растра (backend:
+     * detect_tree_tops.height_from_smoothed) — поведение легаси СИМА 1.44.
+     * Занижает высоту: на кроне 23 м медиана радиусом 1 пикс даёт 21.8 м.
+     */
+    height_from_smoothed: boolean
     afs_correction: AfsCorrection
     cost_weights: CrownCostWeights
   }
@@ -354,7 +354,6 @@ export interface ForestParams {
     enabled: boolean
     percentiles: number[]
     vci_step: number
-    metrics: string[]
     /** Доля самых высоких ячеек кроны, отбрасываемых при расчёте устойчивой высоты. */
     height_trim: number
   }
@@ -374,6 +373,13 @@ export interface ForestParams {
   logging_category: LoggingCategoryParams
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /**
+   * Разрешение расчёта ЦМД, м/пиксель (backend: CHMConfig.resolution).
+   * Действует при output_resolution_preset='custom'. Задаёт и сетку растра, и
+   * радиус прореживания точек, и — через окно поиска вершин — число найденных
+   * деревьев, поэтому это не постобработка, а параметр самого расчёта.
+   */
+  output_resolution_m: number
   /**
    * Цифровая модель местности (ЦММ) из сессии «Рельефа».
    *
