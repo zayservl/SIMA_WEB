@@ -10,9 +10,6 @@ const defaultSettings: GlobalSettings = {
     forest: '',
   },
   data_dir: '',
-  results_dir: '',
-  default_season: 'summer',
-  default_satellite: 'aerial',
   default_target_crs: '',
   deterministic: {
     enabled: true,

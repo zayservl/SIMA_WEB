@@ -456,9 +456,6 @@ export interface GlobalSettings {
     forest: string
   }
   data_dir: string
-  results_dir: string
-  default_season: 'summer' | 'winter'
-  default_satellite: string
   default_target_crs: string
   deterministic: {
     enabled: boolean
