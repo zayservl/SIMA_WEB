@@ -64,19 +64,12 @@ export const defaultForestParams: ForestParams = {
     },
   },
   stats: { enabled: true, percentiles: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95], vci_step: 1, metrics: ['entropy', 'max', 'mean', 'std', 'skew', 'kurtosis', 'vci', 'area', 'percentiles'], height_trim: 0.05 },
+  // Границы категорий рубки по высоте растительности: 0 — до 1 м, 1 — до 5 м,
+  // 2 — до 16 м, 3 — выше. Порог уклона по умолчанию 15°.
   logging_category: {
     enabled: true,
-    algorithm: 'threshold',
-    features: ['dist', 'diam', 'hght'],
-    thresholds: { hght: 5, dist_far: 10, dist_near: 4, diam: 16 },
-    table: {
-      rows: [
-        { category: '1 категория', height: 8, slope: 15, density: 0.3 },
-        { category: '2 категория', height: 12, slope: 10, density: 0.5 },
-        { category: '3 категория', height: 16, slope: 7, density: 0.7 },
-        { category: '4 категория', height: 20, slope: 5, density: 0.9 },
-      ],
-    },
+    height_limits_m: [1, 5, 16],
+    slope_rule: { enabled: false, threshold_deg: 15 },
   },
   smoothing_preset: 'medium',
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },

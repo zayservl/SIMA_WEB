@@ -9,7 +9,7 @@ import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
-import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod } from '@/api/types'
+import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
 import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
@@ -51,7 +51,11 @@ function withDefaults(fp?: ForestParams): ForestParams {
     },
     stats: { ...d.stats, ...fp.stats },
     smoothing: { ...d.smoothing, ...fp.smoothing },
-    logging_category: { ...d.logging_category, ...fp.logging_category },
+    logging_category: {
+      ...d.logging_category, ...fp.logging_category,
+      slope_rule: { ...d.logging_category.slope_rule, ...fp.logging_category?.slope_rule },
+      height_limits_m: fp.logging_category?.height_limits_m ?? d.logging_category.height_limits_m,
+    },
   }
 }
 
@@ -71,6 +75,14 @@ export default function Forest() {
   // По умолчанию на расчёт идут все доступные тайлы.
   const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
   const set = <K extends keyof ForestParams>(k: K, v: ForestParams[K]) => setP((s) => ({ ...s, [k]: v }))
+  const setLogging = (patch: Partial<LoggingCategoryParams>) =>
+    setP((s) => ({ ...s, logging_category: { ...s.logging_category, ...patch } }))
+  const setHeightLimit = (i: 0 | 1 | 2, v: number) =>
+    setP((s) => {
+      const limits = [...s.logging_category.height_limits_m] as [number, number, number]
+      limits[i] = v
+      return { ...s, logging_category: { ...s.logging_category, height_limits_m: limits } }
+    })
 
   // Пресет сглаживания задаёт sigma; в режиме «Пользовательское» её вводят руками.
   const handleSmoothingPreset = (v: SmoothingPreset) =>
@@ -142,6 +154,11 @@ export default function Forest() {
         ].filter(Boolean) as string[]
       })()
     : null
+
+  // Границы категорий обязаны возрастать: иначе интервал схлопывается и
+  // категория никогда не встретится в результате.
+  const [h0, h1, h2] = p.logging_category.height_limits_m
+  const limitsAscending = h0 < h1 && h1 < h2
 
   // Детекция крон идёт по ортофотоплану: без АФС расчёт недоступен.
   const afsAvailable = hasAfs(projectId || '')
@@ -480,85 +497,70 @@ export default function Forest() {
       {/* Категория рубки */}
       <Card>
         <CardPad>
-          <Accordion title="Категория рубки" defaultOpen={false}>
+          <Accordion title="Категории рубки леса" defaultOpen={false}>
             <div className="space-y-4">
-              <Checkbox checked={p.logging_category.enabled} onChange={(v) => set('logging_category', { ...p.logging_category, enabled: v })} label="Определять категории" />
+              <Checkbox
+                checked={p.logging_category.enabled}
+                onChange={(v) => setLogging({ enabled: v })}
+                label="Определять категории"
+              />
               <div className={`space-y-4 ${p.logging_category.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
-                <div className="flex flex-wrap gap-5">
-                  <Radio checked={p.logging_category.algorithm === 'threshold'} onChange={() => set('logging_category', { ...p.logging_category, algorithm: 'threshold' })} label="Пороговые правила" />
-                  <div className="flex items-center gap-1">
-                    <Radio checked={p.logging_category.algorithm === 'linear'} onChange={() => set('logging_category', { ...p.logging_category, algorithm: 'linear' })} label="Линейная модель" />
-                    <InfoHint text="Логистическая регрессия по признакам [dist, diam, hght]. Обучается на размеченных данных. Классы: 1 — рубка, 2 — отложить, 3 — оставить." />
-                  </div>
-                </div>
-                {p.logging_category.algorithm === 'threshold' && p.logging_category.thresholds && (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Field label="hght <"><NumberInput value={p.logging_category.thresholds.hght} onChange={(v) => set('logging_category', { ...p.logging_category, thresholds: { ...p.logging_category.thresholds!, hght: v } })} /></Field>
-                    <Field label="dist >"><NumberInput value={p.logging_category.thresholds.dist_far} onChange={(v) => set('logging_category', { ...p.logging_category, thresholds: { ...p.logging_category.thresholds!, dist_far: v } })} /></Field>
-                    <Field label="dist ≥"><NumberInput value={p.logging_category.thresholds.dist_near} onChange={(v) => set('logging_category', { ...p.logging_category, thresholds: { ...p.logging_category.thresholds!, dist_near: v } })} /></Field>
-                    <Field label="diam <"><NumberInput value={p.logging_category.thresholds.diam} onChange={(v) => set('logging_category', { ...p.logging_category, thresholds: { ...p.logging_category.thresholds!, diam: v } })} /></Field>
-                  </div>
-                )}
-
-                {/* Таблица категорий 4×3 */}
+                {/* Высота дерева по категориям */}
                 <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Таблица категорий рубки
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Высота дерева по категориям
+                    </span>
+                    <InfoHint text="Границы берутся с карты высот растительности (ЦМД) и заданы как «до, включительно». Каждая следующая категория начинается сразу за границей предыдущей." />
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="py-2 pr-3 font-medium">Категория</th>
-                          <th className="py-2 px-3 font-medium">Высота дерева</th>
-                          <th className="py-2 px-3 font-medium">Уклон</th>
-                          <th className="py-2 px-3 font-medium">Плотность</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {p.logging_category.table.rows.map((row, i) => (
-                          <tr key={i} className="border-b border-slate-100">
-                            <td className="py-2 pr-3 text-slate-700">{row.category}</td>
-                            <td className="py-2 px-3">
-                              <NumberInput
-                                value={row.height}
-                                step={0.1}
-                                disabled={!p.logging_category.enabled}
-                                onChange={(v) => {
-                                  const rows = [...p.logging_category.table.rows]
-                                  rows[i] = { ...rows[i], height: v }
-                                  set('logging_category', { ...p.logging_category, table: { rows } })
-                                }}
-                              />
-                            </td>
-                            <td className="py-2 px-3">
-                              <NumberInput
-                                value={row.slope}
-                                step={0.1}
-                                disabled={!p.logging_category.enabled}
-                                onChange={(v) => {
-                                  const rows = [...p.logging_category.table.rows]
-                                  rows[i] = { ...rows[i], slope: v }
-                                  set('logging_category', { ...p.logging_category, table: { rows } })
-                                }}
-                              />
-                            </td>
-                            <td className="py-2 px-3">
-                              <NumberInput
-                                value={row.density}
-                                step={0.05}
-                                disabled={!p.logging_category.enabled}
-                                onChange={(v) => {
-                                  const rows = [...p.logging_category.table.rows]
-                                  rows[i] = { ...rows[i], density: v }
-                                  set('logging_category', { ...p.logging_category, table: { rows } })
-                                }}
-                              />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {([0, 1, 2] as const).map((i) => (
+                      <Field key={i} label={`${i} категория, до (м)`}>
+                        <NumberInput
+                          value={p.logging_category.height_limits_m[i]}
+                          step={0.5}
+                          min={0}
+                          onChange={(v) => setHeightLimit(i, v)}
+                        />
+                      </Field>
+                    ))}
+                    <Field
+                      label="3 категория"
+                      tooltip="Верхняя граница не задаётся: в третью категорию попадает всё, что выше границы второй."
+                    >
+                      <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">
+                        более {p.logging_category.height_limits_m[2]} м
+                      </div>
+                    </Field>
+                  </div>
+                  {!limitsAscending && (
+                    <p className="mt-2 text-xs text-amber-600">
+                      Границы должны возрастать: 0 категория &lt; 1 категория &lt; 2 категория.
+                      Иначе часть категорий останется пустой.
+                    </p>
+                  )}
+                </div>
+
+                {/* Правило по уклону */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Checkbox
+                      checked={p.logging_category.slope_rule.enabled}
+                      onChange={(v) => setLogging({ slope_rule: { ...p.logging_category.slope_rule, enabled: v } })}
+                      label="Учитывать карту уклонов"
+                    />
+                    <InfoHint text="Карта уклонов берётся из выбранной сессии «Рельефа». Участок круче порога относится к 3 категории независимо от высоты растительности." />
+                  </span>
+                  <div className={`mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 ${p.logging_category.slope_rule.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                    <Field label="Уклон более (°) → 3 категория">
+                      <NumberInput
+                        value={p.logging_category.slope_rule.threshold_deg}
+                        step={1}
+                        min={0}
+                        max={90}
+                        onChange={(v) => setLogging({ slope_rule: { ...p.logging_category.slope_rule, threshold_deg: v } })}
+                      />
+                    </Field>
                   </div>
                 </div>
               </div>

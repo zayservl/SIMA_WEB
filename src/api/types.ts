@@ -28,15 +28,6 @@ export interface ReliefSource {
   upload_path?: string
 }
 
-export interface LoggingCategoryTable {
-  rows: {
-    category: string
-    height: number
-    slope: number
-    density: number
-  }[]
-}
-
 export interface Scene {
   id: string
   afs_dir?: string
@@ -371,18 +362,7 @@ export interface ForestParams {
     order: number
     window: number
   }
-  logging_category: {
-    enabled: boolean
-    algorithm: 'threshold' | 'linear'
-    features: string[]
-    thresholds?: {
-      hght: number
-      dist_far: number
-      dist_near: number
-      diam: number
-    }
-    table: LoggingCategoryTable
-  }
+  logging_category: LoggingCategoryParams
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
   /**
@@ -400,6 +380,26 @@ export interface ForestParams {
    * подставляется автоматически из той же сессии, что и ЦММ.
    */
   derivatives_source: ReliefSource
+}
+
+/**
+ * Категория рубки леса. Определяется по карте высот растительности: высота
+ * дерева попадает в интервал одной из четырёх категорий. Границы заданы как
+ * «до, включительно»; верхняя граница 3-й категории не задаётся — это всё, что
+ * выше границы 2-й.
+ *
+ * Опционально подключается карта уклонов из сессии «Рельефа»: уклон круче
+ * порога сразу переводит участок в 3-ю категорию независимо от высоты.
+ */
+export interface LoggingCategoryParams {
+  enabled: boolean
+  /** Верхние границы высоты дерева по категориям 0, 1 и 2, м (включительно). */
+  height_limits_m: [number, number, number]
+  slope_rule: {
+    enabled: boolean
+    /** Уклон круче порога → категория 3, °. */
+    threshold_deg: number
+  }
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
