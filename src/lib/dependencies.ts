@@ -60,7 +60,7 @@ export function checkDependencies(projectId: string, module: JobType, sources?: 
     }
     const reliefOk = hasSuccessfulJob(projectId, 'relief') || sourceSatisfied(sources?.dsm_source)
     if (!reliefOk) {
-      missing.push({ layer: 'ЦММ (Рельеф)', tab: 'Рельеф' })
+      missing.push({ layer: 'ЦММ', tab: 'Рельеф' })
     }
   } else if (module === 'water') {
     // Вода считается нейросетью по ортофотоплану: без АФС считать нечего,

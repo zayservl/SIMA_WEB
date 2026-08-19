@@ -19,7 +19,8 @@ export type ProjectStatus = 'empty' | 'uploaded' | 'processing' | 'done' | 'erro
 
 // 'custom' — пользовательские настройки: значения берутся не из пресета, а из
 // явных полей (smoothing.* для сглаживания, output_resolution_m для разрешения).
-export type SmoothingPreset = 'light' | 'medium' | 'strong' | 'custom'
+// 'off' — сглаживание не выполняется (backend: smoothing.enabled=False).
+export type SmoothingPreset = 'off' | 'light' | 'medium' | 'strong' | 'custom'
 export type ResolutionPreset = 'native' | '0.1m' | '0.25m' | '0.5m' | '1m' | '2m' | 'custom'
 
 export interface ReliefSource {
@@ -28,21 +29,16 @@ export interface ReliefSource {
   upload_path?: string
 }
 
-export interface LoggingCategoryTable {
-  rows: {
-    category: string
-    height: number
-    slope: number
-    density: number
-  }[]
-}
-
 export interface Scene {
   id: string
   afs_dir?: string
   vls_dir?: string
+  /**
+   * Целевая СК проекта. Не выбирается вручную: считывается из метаданных АФС
+   * (в режиме «только ВЛС» — из ВЛС). Материалы с иной СК приводятся к ней
+   * безусловно, поэтому флага «приводить/не приводить» в контракте нет.
+   */
   target_crs?: string
-  reproject: boolean
   deterministic: boolean
   seed: number
 }
@@ -131,6 +127,12 @@ export interface Tile {
 export interface Job {
   id: string
   project_id: string
+  /**
+   * Имя расчёта. Задаётся пользователем при запуске и правится потом в очереди
+   * задач: сессии различаются параметрами и набором тайлов, по одному лишь типу
+   * модуля и идентификатору сессии их не различить.
+   */
+  name: string
   type: JobType
   status: JobStatus
   progress: number
@@ -150,9 +152,10 @@ export interface Job {
 
 // ---- Параметры: Рельеф (#8,9,10,14) --------------------------------------
 
-// 'las_class' — земля берётся из готовой классификации LAS (ASPRS class 2),
-// собственная классификация не выполняется (backend: CheckClassification.is_ground).
-export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf' | 'las_class'
+// Набор 1:1 к sima_relief_service.steps.step_filter. Готовая классификация LAS
+// отдельным методом не выбирается: сервис определяет её сам
+// (GroundProcessing.get_raster → CheckClassification.is_ground).
+export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf'
 
 // Метод заполнения пустот растра (backend: sima_dem_core.raster.holes.fill_voids).
 // 'laplace' — решение уравнения Лапласа, поверхность гладкая по построению;
@@ -175,6 +178,8 @@ export interface ReliefParams {
     threshold: number
     scalar: number
     cut_smrf: boolean
+    /** Порог отсечения в cut-режиме, м (backend: SMRFConfig.cut_threshold). Действует при cut_smrf. */
+    cut_threshold: number
     elm: boolean
     outlier: boolean
   }
@@ -248,16 +253,18 @@ export interface ReliefParams {
     horizontals: number[]
     tin: boolean
   }
+  /**
+   * Сохранять маску измеренных ячеек ЦМР (backend: ReliefService.save_measured_mask).
+   * Даёт слой dtm_measured — где отметка получена из точек, а где достроена
+   * интерполяцией. Разводит точность построения и точность заполнения пустот.
+   */
+  save_measured_mask: boolean
   target_crs: string
   deterministic: boolean
   seed: number
 }
 
 // ---- Параметры: Лес/Древостой (#11,12,13,16) -----------------------------
-
-// Способ определения параметров блока: моделью (ИИ) или явными правилами.
-// В режиме 'ai' ручные пороги блока не задаются — их подбирает модель.
-export type ParamMode = 'ai' | 'algorithmic'
 
 /**
  * Веса поверхности стоимости водораздела (backend: sima_forest_cmd.CostWeights).
@@ -299,12 +306,12 @@ export interface AfsCorrection {
 export interface ForestParams {
   cmd: {
     enabled: boolean
-    mode: ParamMode
+    /** Как высоты точек сводятся в ячейку полога (backend: CHMConfig.output_type). */
+    output_type: 'max' | 'mean' | 'idw'
     threshold_surface: number
     threshold_shrub: number
     /** Дополнительные каналы ЦМД (backend: CHMConfig.with_intensity/with_density). */
     channels: { chm: boolean; intensity: boolean; density: boolean }
-    median_window: number
     /** Сохранять облако с переклассифицированной по высоте растительностью. */
     save_classified_las: boolean
     /** Заполнение пустот полога (backend: CHMConfig). Гидровыравнивание к ЦМД не применяется. */
@@ -320,8 +327,6 @@ export interface ForestParams {
   detection: {
     /** Детекция крон — опциональный расчёт; от неё зависят статистики по сегментам. */
     enabled: boolean
-    mode: ParamMode
-    vegetation_state: 'active' | 'absent'
     /**
      * Окно поиска вершин крон, м (backend: sima_forest_cmd.detect_tree_tops.window_m).
      * Задаёт минимальное расстояние между соседними деревьями и потому напрямую
@@ -337,6 +342,12 @@ export interface ForestParams {
     max_height_m: number
     /** Радиус медианного сглаживания ЦМД перед поиском вершин, пикс. 0 — без сглаживания. */
     smooth_radius_px: number
+    /**
+     * Снимать высоту дерева со сглаженного растра (backend:
+     * detect_tree_tops.height_from_smoothed) — поведение легаси СИМА 1.44.
+     * Занижает высоту: на кроне 23 м медиана радиусом 1 пикс даёт 21.8 м.
+     */
+    height_from_smoothed: boolean
     afs_correction: AfsCorrection
     cost_weights: CrownCostWeights
   }
@@ -344,7 +355,6 @@ export interface ForestParams {
     enabled: boolean
     percentiles: number[]
     vci_step: number
-    metrics: string[]
     /** Доля самых высоких ячеек кроны, отбрасываемых при расчёте устойчивой высоты. */
     height_trim: number
   }
@@ -361,20 +371,16 @@ export interface ForestParams {
     order: number
     window: number
   }
-  logging_category: {
-    enabled: boolean
-    algorithm: 'threshold' | 'linear'
-    features: string[]
-    thresholds?: {
-      hght: number
-      dist_far: number
-      dist_near: number
-      diam: number
-    }
-    table: LoggingCategoryTable
-  }
+  logging_category: LoggingCategoryParams
   smoothing_preset: SmoothingPreset
   output_resolution_preset: ResolutionPreset
+  /**
+   * Разрешение расчёта ЦМД, м/пиксель (backend: CHMConfig.resolution).
+   * Действует при output_resolution_preset='custom'. Задаёт и сетку растра, и
+   * радиус прореживания точек, и — через окно поиска вершин — число найденных
+   * деревьев, поэтому это не постобработка, а параметр самого расчёта.
+   */
+  output_resolution_m: number
   /**
    * Цифровая модель местности (ЦММ) из сессии «Рельефа».
    *
@@ -390,6 +396,26 @@ export interface ForestParams {
    * подставляется автоматически из той же сессии, что и ЦММ.
    */
   derivatives_source: ReliefSource
+}
+
+/**
+ * Категория рубки леса. Определяется по карте высот растительности: высота
+ * дерева попадает в интервал одной из четырёх категорий. Границы заданы как
+ * «до, включительно»; верхняя граница 3-й категории не задаётся — это всё, что
+ * выше границы 2-й.
+ *
+ * Опционально подключается карта уклонов из сессии «Рельефа»: уклон круче
+ * порога сразу переводит участок в 3-ю категорию независимо от высоты.
+ */
+export interface LoggingCategoryParams {
+  enabled: boolean
+  /** Верхние границы высоты дерева по категориям 0, 1 и 2, м (включительно). */
+  height_limits_m: [number, number, number]
+  slope_rule: {
+    enabled: boolean
+    /** Уклон круче порога → категория 3, °. */
+    threshold_deg: number
+  }
 }
 
 // ---- Параметры: Вода (#15) -----------------------------------------------
@@ -430,9 +456,6 @@ export interface GlobalSettings {
     forest: string
   }
   data_dir: string
-  results_dir: string
-  default_season: 'summer' | 'winter'
-  default_satellite: string
   default_target_crs: string
   deterministic: {
     enabled: boolean

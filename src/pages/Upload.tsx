@@ -3,41 +3,15 @@ import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input, Field, InfoHint } from '@/components/ui/controls'
+import { Input, Field, InfoHint, NumberInput } from '@/components/ui/controls'
 import { Badge } from '@/components/ui/badge'
-import { FolderOpen, AlertTriangle, CheckCircle2, XCircle, Layers, Grid3x3 } from 'lucide-react'
+import { FolderOpen, AlertTriangle, CheckCircle2, Layers, Grid3x3 } from 'lucide-react'
 import type { MaterialAssessment } from '@/api/types'
-
-// ---- Потайловая модель входных материалов (Блок Д) -----------------------
-
-interface InputAfs {
-  file: string
-  crs: string
-  vertical_crs?: string
-  resolution_m: number
-  size_mb: number
-}
-interface InputVls {
-  file: string
-  crs: string
-  vertical_crs?: string
-  density_pts_m2: number
-  height_range_m: [number, number]
-  size_mb: number
-  /** Классы ASPRS, присутствующие в файле. Пустой массив — классификации нет. */
-  classes: number[]
-}
-
-interface InputTile {
-  id: string
-  name: string // общий номер пары, напр. tile_001
-  afs: InputAfs | null
-  vls: InputVls | null
-  area_km2: number
-}
-
-const TARGET_CRS = 'EPSG:32637'
-const VERTICAL_CRS = 'EPSG:5705 (Балтийская 1977)'
+import {
+  generateMockInputTiles, CLASS_LABELS, TARGET_CRS,
+  inputMode, originOffsetM, formatOrigin, DEFAULT_ORIGIN_TOLERANCE_M,
+  type InputTile, type InputMode,
+} from '@/lib/inputTiles'
 
 // Требования к именам входящих файлов и правило спаривания. Единый текст для
 // тултипов у обоих каталогов.
@@ -47,87 +21,31 @@ const NAMING_TOOLTIP =
   'Файлы, для которых не нашлась пара, показываются как неполные и пропускаются при пакетной обработке. ' +
   'Пробелы, кириллица и точки внутри имени не допускаются.'
 
-// Классы ASPRS, используемые конвейером: 2 — земля (вход «Рельефа»),
-// 3-5 — растительность (вход «Древостоя»), 7 — шум.
-const CLASS_LABELS: Record<number, string> = {
-  1: 'не классифицировано',
-  2: 'земля',
-  3: 'низкая растительность',
-  4: 'средняя растительность',
-  5: 'высокая растительность',
-  6: 'здания',
-  7: 'шум',
-}
+// Расхождение СК внутри пары не блокирует расчёт: целевая СК проекта — это СК
+// АФС, и материалы с другой СК приводятся к ней безусловно. Единственное, что
+// снимает тайл с обработки, — отсутствие одного из файлов пары.
+type PairStatus = 'ok' | 'reproject' | 'shifted' | 'incomplete' | 'vls_only' | 'afs_only'
 
-type InputMode = 'pair' | 'vls-only' | 'afs-only'
-
-// Демо-набор пар ТИФ+ЛАС. Включает: совпадающие пары, пары с несовпадением СК
-// (демонстрация валидации), пару без ВЛС (неполная), файлы с классификацией и без.
-function generateMockInputTiles(mode: InputMode): InputTile[] {
-  const tiles: InputTile[] = []
-  for (let i = 1; i <= 24; i++) {
-    const id = `in-${String(i).padStart(3, '0')}`
-    const name = `tile_${String(i).padStart(3, '0')}`
-    const afsFile = `${String(i * 100).padStart(6, '0')}.tif`
-    const vlsFile = `pt${String(i * 100).padStart(6, '0')}.las`
-    const afsSize = 130 + ((i * 7) % 30)
-    const vlsSize = 115 + ((i * 5) % 25)
-    const density = 4000 + ((i * 37) % 1000)
-    const hMin = +(15 + ((i * 0.5) % 30)).toFixed(2)
-    const hMax = +(950 + ((i * 3) % 200)).toFixed(2)
-
-    let afsCrs = TARGET_CRS
-    // Часть файлов приходит уже классифицированной, часть — сырой.
-    const classes = i % 3 === 0 ? [] : [1, 2, 3, 4, 5]
-    let vls: InputVls | null = {
-      file: vlsFile, crs: TARGET_CRS, vertical_crs: VERTICAL_CRS,
-      density_pts_m2: density, height_range_m: [hMin, hMax], size_mb: vlsSize, classes,
-    }
-    // Система высот в метаданных АФС встречается не всегда.
-    let afs: InputAfs | null = {
-      file: afsFile, crs: afsCrs, vertical_crs: i % 4 === 0 ? undefined : VERTICAL_CRS,
-      resolution_m: 0.14, size_mb: afsSize,
-    }
-
-    if (mode === 'vls-only') {
-      afs = null
-    } else if (mode === 'afs-only') {
-      vls = null
-    } else if (i === 21 || i === 22) {
-      // СК не совпадает внутри пары → валидация подсветит это
-      afsCrs = 'EPSG:4326'
-      afs = { ...afs!, crs: afsCrs }
-    } else if (i === 23) {
-      // Неполная пара: нет ВЛС
-      vls = null
-    }
-
-    tiles.push({ id, name, area_km2: 1.0, afs, vls })
-  }
-  return tiles
-}
-
-type PairStatus = 'ok' | 'reproject' | 'mismatch' | 'incomplete' | 'vls_only' | 'afs_only'
-
-function pairStatus(t: InputTile, reproject: boolean, mode: InputMode): PairStatus {
+function pairStatus(t: InputTile, mode: InputMode, originTolM: number): PairStatus {
   // Отсутствие целого каталога — это режим работы, а не ошибка валидации.
   if (mode === 'vls-only') return t.vls ? 'vls_only' : 'incomplete'
   if (mode === 'afs-only') return t.afs ? 'afs_only' : 'incomplete'
   if (!t.afs || !t.vls) return 'incomplete'
-  if (t.afs.crs === t.vls.crs) return 'ok'
-  return reproject ? 'reproject' : 'mismatch'
+  if (t.afs.crs !== t.vls.crs) return 'reproject'
+  const offset = originOffsetM(t)
+  return offset !== null && offset > originTolM ? 'shifted' : 'ok'
 }
 
 const pairLabel: Record<PairStatus, string> = {
-  ok: 'СК совпадают',
+  ok: 'Пара валидна',
   reproject: 'СК разнятся → приведение',
-  mismatch: 'СК не совпадают',
+  shifted: 'Углы разъехались',
   incomplete: 'Неполная пара',
   vls_only: 'Только ВЛС',
   afs_only: 'Только АФС',
 }
 const pairVariant: Record<PairStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  ok: 'success', reproject: 'warning', mismatch: 'danger', incomplete: 'neutral',
+  ok: 'success', reproject: 'warning', shifted: 'warning', incomplete: 'neutral',
   vls_only: 'warning', afs_only: 'warning',
 }
 
@@ -194,18 +112,24 @@ const UNKNOWN = <span className="text-amber-600">не указана</span>
 export default function Upload() {
   const { projectId } = useParams()
   const setAssessment = useProjectStore((s) => s.setAssessment)
+  const setInputTiles = useProjectStore((s) => s.setInputTiles)
   const updateScene = useProjectStore((s) => s.updateScene)
   const projects = useProjectStore((s) => s.projects)
   const project = projects.find((p) => p.id === projectId)
 
   const [afsDir, setAfsDir] = useState(project?.scene.afs_dir || '')
   const [vlsDir, setVlsDir] = useState(project?.scene.vls_dir || '')
-  const [tiles, setTiles] = useState<InputTile[]>([])
-  const [assessed, setAssessed] = useState(false)
-  const [detectedCrs, setDetectedCrs] = useState<string | null>(null)
-  const [mode, setMode] = useState<InputMode>('pair')
+  const storedTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+  const [tiles, setTiles] = useState<InputTile[]>(() => storedTiles ?? [])
+  const [assessed, setAssessed] = useState(() => !!storedTiles?.length)
+  const [detectedCrs, setDetectedCrs] = useState<string | null>(
+    () => storedTiles?.find((t) => t.afs)?.afs?.crs ?? storedTiles?.find((t) => t.vls)?.vls?.crs ?? null,
+  )
+  const [originTolM, setOriginTolM] = useState(DEFAULT_ORIGIN_TOLERANCE_M)
+  const [mode, setMode] = useState<InputMode>(() => (storedTiles?.length ? inputMode(storedTiles) : 'pair'))
 
-  const reproject = project?.scene.reproject ?? true
+  // Целевая СК = СК АФС (при режиме «только ВЛС» — СК ВЛС): её считывает
+  // «Оценить материалы», вручную она не задаётся.
   const targetCrs = project?.scene.target_crs || TARGET_CRS
 
   const handleAssess = () => {
@@ -216,13 +140,12 @@ export default function Upload() {
     setMode(nextMode)
     const generated = generateMockInputTiles(nextMode)
     setTiles(generated)
+    setInputTiles(projectId, generated)
     setAssessment(projectId, aggregate(generated))
 
-    // СК из первого валидного тайла: АФС приоритетнее ВЛС.
-    const afsTile = generated.find((t) => t.afs)
-    const vlsTile = generated.find((t) => t.vls)
-    const afsCrs = afsTile?.afs?.crs ?? null
-    const vlsCrs = vlsTile?.vls?.crs ?? null
+    // Целевая СК проекта — СК АФС; без АФС берём СК ВЛС.
+    const afsCrs = generated.find((t) => t.afs)?.afs?.crs ?? null
+    const vlsCrs = generated.find((t) => t.vls)?.vls?.crs ?? null
     const detected = afsCrs ?? vlsCrs
     setDetectedCrs(detected)
 
@@ -233,11 +156,17 @@ export default function Upload() {
     setAssessed(true)
   }
 
-  const statuses = tiles.map((t) => pairStatus(t, reproject, mode))
-  const hasMismatch = statuses.includes('mismatch')
-  const hasReproject = statuses.includes('reproject')
+  const statuses = tiles.map((t) => pairStatus(t, mode, originTolM))
   const hasIncomplete = statuses.includes('incomplete')
-  const canProceed = !hasMismatch && !hasIncomplete
+  // Тайлы, у которых СК ВЛС отличается от целевой — их приводим и называем поимённо.
+  const reprojectTiles = tiles.filter((t, i) => statuses[i] === 'reproject')
+  // Пары с совпадающей СК, но разъехавшейся геопривязкой: сверяем нижний левый
+  // угол тайла. Расчёт не блокируется — решение за пользователем.
+  const shiftedTiles = tiles
+    .map((t) => ({ tile: t, offset: originOffsetM(t) }))
+    .filter((r): r is { tile: InputTile; offset: number } => r.offset !== null && r.offset > originTolM)
+  const canProceed = !hasIncomplete
+  const incompleteTiles = tiles.filter((t, i) => statuses[i] === 'incomplete')
 
   // Сводка метаданных исходных материалов по обоим типам съёмки.
   const report = tiles.length ? aggregate(tiles) : null
@@ -371,13 +300,13 @@ export default function Upload() {
           <CardPad>
             <CardHeader
               title="Оценка материалов по тайлам"
-              subtitle={`Целевая СК: ${targetCrs} · приведение ${reproject ? 'включено' : 'выключено'}`}
+              subtitle="Спаривание файлов, приведение СК и сверка геопривязки" 
               action={<Layers className="h-4 w-4 text-slate-400" />}
             />
             {detectedCrs ? (
               <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                СК считана из метаданных: {detectedCrs}
+                Целевая СК проекта — {detectedCrs} (из метаданных {mode === 'vls-only' ? 'ВЛС' : 'АФС'})
               </div>
             ) : (
               <div className="mb-3 flex items-center gap-1.5 text-xs text-amber-600">
@@ -385,6 +314,14 @@ export default function Upload() {
                 СК не определена — проверьте файлы
               </div>
             )}
+            <div className="mb-3 sm:max-w-xs">
+              <Field
+                label="Допуск на расхождение углов, м"
+                tooltip="У пар с совпадающей СК сверяются координаты нижнего левого угла тайлов АФС и ВЛС. Расхождение больше допуска — предупреждение: тайл остаётся доступен для расчёта, решение за пользователем."
+              >
+                <NumberInput value={originTolM} step={0.1} min={0} onChange={setOriginTolM} />
+              </Field>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -393,12 +330,13 @@ export default function Upload() {
                     <th className="py-2 pr-4">АФС (ТИФ)</th>
                     <th className="py-2 pr-4">ВЛС (ЛАС)</th>
                     <th className="py-2 pr-4">Площадь</th>
+                    <th className="py-2 pr-4">Нижний левый угол</th>
                     <th className="py-2 pr-4">Валидация пары</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tiles.map((t) => {
-                    const st = pairStatus(t, reproject, mode)
+                    const st = pairStatus(t, mode, originTolM)
                     return (
                       <tr key={t.id} className="border-b last:border-0">
                         <td className="py-2.5 pr-4 font-mono text-xs">{t.name}</td>
@@ -426,11 +364,23 @@ export default function Upload() {
                           ) : <span className="text-xs text-slate-400">—</span>}
                         </td>
                         <td className="py-2.5 pr-4 font-mono text-xs text-slate-600">{t.area_km2} км²</td>
+                        <td className="py-2.5 pr-4 text-xs">
+                          {t.afs && <div className="font-mono text-slate-600">АФС {formatOrigin(t.afs.origin)}</div>}
+                          {t.vls && <div className="font-mono text-slate-600">ВЛС {formatOrigin(t.vls.origin)}</div>}
+                          {(() => {
+                            const off = originOffsetM(t)
+                            if (off === null) {
+                              return <div className="text-slate-400">СК разнятся — сверка после приведения</div>
+                            }
+                            return off > originTolM
+                              ? <div className="text-amber-600">расхождение {off} м</div>
+                              : <div className="text-emerald-600">совпадают</div>
+                          })()}
+                        </td>
                         <td className="py-2.5 pr-4">
                           <div className="flex items-center gap-1.5">
                             {st === 'ok' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                            {st === 'reproject' && <AlertTriangle className="h-4 w-4 text-amber-500" />}
-                            {st === 'mismatch' && <XCircle className="h-4 w-4 text-red-500" />}
+                            {(st === 'reproject' || st === 'shifted') && <AlertTriangle className="h-4 w-4 text-amber-500" />}
                             {st === 'incomplete' && <AlertTriangle className="h-4 w-4 text-slate-400" />}
                             <Badge variant={pairVariant[st]}>{pairLabel[st]}</Badge>
                           </div>
@@ -443,21 +393,26 @@ export default function Upload() {
             </div>
 
             {/* Предупреждения валидации */}
-            {(hasMismatch || hasReproject || hasIncomplete) && (
+            {(reprojectTiles.length > 0 || shiftedTiles.length > 0 || hasIncomplete) && (
               <div className="mt-3 space-y-2">
-                {hasMismatch && (
-                  <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
-                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div>
-                      Есть пары с несовпадающей СК, а приведение выключено. Включите «Привести к целевой СК» в «Параметрах проекта» — иначе алгоритм отработает некорректно (опыт: «в разных СК не работает»).
-                    </div>
-                  </div>
-                )}
-                {hasReproject && (
+                {shiftedTiles.length > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
-                      Есть пары с разной СК у АФС и ВЛС — они будут приведены к {targetCrs} перед обработкой.
+                      СК совпадают, но нижние левые углы тайлов АФС и ВЛС разъехались больше
+                      допуска ({originTolM} м):{' '}
+                      {shiftedTiles.map((r) => `${r.tile.name} — ${r.offset} м`).join(', ')}.
+                      Обычно это признак разной нарезки съёмок. Тайлы остаются доступны для расчёта.
+                    </div>
+                  </div>
+                )}
+                {reprojectTiles.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      СК ВЛС отличается от СК АФС у {reprojectTiles.length} тайлов
+                      ({reprojectTiles.map((t) => t.name).join(', ')}). Данные будут приведены
+                      к {targetCrs} — целевой СК проекта, считанной из АФС.
                     </div>
                   </div>
                 )}
@@ -465,7 +420,8 @@ export default function Upload() {
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
-                      Есть неполные пары (нет АФС или ВЛС). Такие тайлы будут пропущены при пакетной обработке.
+                      Неполные пары — нет АФС или ВЛС: {incompleteTiles.map((t) => t.name).join(', ')}.
+                      Такие тайлы недоступны для расчёта.
                     </div>
                   </div>
                 )}
@@ -498,14 +454,13 @@ export default function Upload() {
               <div className="mt-3 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
                 <div>
-                  Классификация есть в {classifiedCount} из {vlsCount} файлов ВЛС. Чтобы взять землю
-                  из неё вместо собственной классификации, выберите в «Рельефе» метод «Из
-                  классификации LAS».
+                  Классификация есть в {classifiedCount} из {vlsCount} файлов ВЛС. Там, где она есть,
+                  земля берётся из неё; для остальных тайлов «Рельеф» классифицирует облако сам.
                 </div>
               </div>
             )}
 
-            {canProceed && tiles.length > 0 && mode === 'pair' && (
+            {canProceed && tiles.length > 0 && mode === 'pair' && reprojectTiles.length === 0 && shiftedTiles.length === 0 && (
               <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 Все пары валидны. Можно запускать обработку в разделе «Рельеф», «Древостой» или «Вода».

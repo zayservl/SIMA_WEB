@@ -66,34 +66,13 @@ export default function Settings() {
       <Card>
         <CardPad>
           <CardHeader title="Рабочие каталоги" />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Каталог данных">
-              <Input
-                value={settings.data_dir}
-                onChange={(e) => update({ data_dir: e.target.value })}
-                placeholder="/path/to/data"
-              />
-            </Field>
-            <Field label="Каталог результатов">
-              <Input
-                value={settings.results_dir}
-                onChange={(e) => update({ results_dir: e.target.value })}
-                placeholder="/path/to/results"
-              />
-            </Field>
-          </div>
-          <div className="mt-4">
-            <Field label="Сезон по умолчанию">
-              <select
-                className="input-base"
-                value={settings.default_season}
-                onChange={(e) => update({ default_season: e.target.value as 'summer' | 'winter' })}
-              >
-                <option value="summer">Лето</option>
-                <option value="winter">Зима</option>
-              </select>
-            </Field>
-          </div>
+          <Field label="Каталог данных" className="sm:max-w-md">
+            <Input
+              value={settings.data_dir}
+              onChange={(e) => update({ data_dir: e.target.value })}
+              placeholder="/path/to/data"
+            />
+          </Field>
         </CardPad>
       </Card>
 

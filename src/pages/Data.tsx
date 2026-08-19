@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
+import { withPlural, TILES, FILES } from '@/lib/plural'
+import { jobOutcome, projectRoute } from '@/lib/jobs'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +42,9 @@ const PARAM_LABELS: Record<string, string> = {
   output_resolution_m: 'Разрешение, м',
   dsm: 'ЦММ',
   output_type: 'Агрегация точек',
+  cut_threshold: 'Порог отсечения, м',
+  save_measured_mask: 'Маска измеренных ячеек',
+  height_from_smoothed: 'Высота со сглаженного растра',
   interpolate: 'Интерполяция',
   fill_holes: 'Заполнение пустот',
   max_search_distance: 'Радиус поиска, пикс',
@@ -57,7 +63,7 @@ const PARAM_LABELS: Record<string, string> = {
   source: 'Источник',
   min_distance_m: 'Мин. расстояние между точками, м',
   vectors: 'Векторы',
-  horizontals: 'Горизонтали',
+  horizontals: 'Сечение горизонталей, м',
   tin: 'TIN',
   target_crs: 'Целевая СК',
   deterministic: 'Детерминизм',
@@ -67,31 +73,21 @@ const PARAM_LABELS: Record<string, string> = {
   threshold_shrub: 'Порог кустарник',
   channels: 'Каналы',
   chm: 'CHM',
-  median_window: 'Окно медианы',
   detection: 'Обнаружение',
   method: 'Метод',
-  vegetation_state: 'Состояние растительности',
   stats: 'Статистика',
   percentiles: 'Перцентили',
   vci_step: 'Шаг VCI',
-  metrics: 'Метрики',
-  logging_category: 'Категория перечёта',
+  logging_category: 'Категории рубки леса',
+  height_limits_m: 'Границы высоты по категориям, м',
+  slope_rule: 'Правило по уклону',
+  threshold_deg: 'Уклон более, °',
   algorithm: 'Алгоритм',
-  features: 'Признаки',
-  thresholds: 'Пороги',
-  hght: 'Высота',
-  dist_far: 'Дист. дальняя',
-  dist_near: 'Дист. ближняя',
-  diam: 'Диаметр',
-  table: 'Таблица',
-  rows: 'Строки',
-  category: 'Категория',
   density: 'Плотность',
   dsm_source: 'Источник ЦММ',
   derivatives_source: 'Источник производных',
   segment: 'Сегментация',
   dem_source: 'Источник ЦМР',
-  mode: 'Определение параметров',
   kind: 'Тип',
   system_session_id: 'ID системной сессии',
   upload_path: 'Путь загрузки',
@@ -131,12 +127,6 @@ function renderParamsValue(value: ParamValue, depth = 0): React.ReactNode {
 }
 
 const typeLabel: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }
-const statusLabel: Record<Job['status'], string> = {
-  queued: 'в очереди', running: 'выполняется', success: 'готово', failed: 'ошибка', cancelled: 'отменена',
-}
-const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
-  queued: 'neutral', running: 'warning', success: 'success', failed: 'danger', cancelled: 'neutral',
-}
 const kindColor: Record<string, string> = {
   raster: 'text-sky-600',
   vector: 'text-emerald-600',
@@ -146,16 +136,19 @@ const kindColor: Record<string, string> = {
 export default function Data() {
   const { projectId } = useParams()
   const jobs = useProjectStore((s) => (projectId ? s.jobs.filter((j) => j.project_id === projectId) : s.jobs))
+  const allJobs = useProjectStore((s) => s.jobs)
+  const hasTiles = useProjectStore((s) => !!(projectId && s.inputTiles[projectId]?.length))
   const [toast, setToast] = useState<string | null>(null)
 
   const fireArchive = (what: string) => setToast(`Готовится архив: ${what} (демо-заглушка)`)
 
   if (jobs.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center text-slate-400">
-        <Database className="mb-3 h-12 w-12" />
-        <p className="text-sm">Нет данных. Запустите обработку — выходные файлы появятся здесь.</p>
-      </div>
+      <EmptyState
+        icon={Database}
+        title="Выходных файлов пока нет"
+        steps={projectRoute(projectId ?? '', allJobs, hasTiles)}
+      />
     )
   }
 
@@ -201,8 +194,9 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
             <FolderTree className="h-5 w-5 text-slate-400" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">{typeLabel[job.type]}</span>
-                <Badge variant={statusVariant[job.status]}>{statusLabel[job.status]}</Badge>
+                <span className="text-sm font-semibold">{job.name}</span>
+                <Badge variant="neutral">{typeLabel[job.type]}</Badge>
+                <Badge variant={jobOutcome(job).variant}>{jobOutcome(job).label}</Badge>
                 {job.session_id && <span className="font-mono text-[10px] text-slate-400">сессия {job.session_id}</span>}
                 <span className={cn('text-[10px]', deterministic ? 'text-emerald-600' : 'text-slate-400')}>
                   {deterministic ? 'детерминизм' : 'недетерминировано'}{seed != null ? ` · seed ${seed}` : ''}
@@ -216,7 +210,7 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => onArchive(`${typeLabel[job.type]} · сессия ${job.session_id}`)} disabled={doneTiles.length === 0}>
+            <Button variant="outline" size="sm" onClick={() => onArchive(`${job.name} · сессия ${job.session_id}`)} disabled={doneTiles.length === 0}>
               <FileArchive className="h-3.5 w-3.5" /> Архив задачи
             </Button>
           </div>
@@ -224,7 +218,7 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
 
         {/* Сводка объёмов */}
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <VolumeTile icon={<HardDrive className="h-4 w-4 text-slate-400" />} label="Выходные данные" value={`${totalMb.toFixed(1)} МБ`} sub={`${doneTiles.length} тайл(ов)`} />
+          <VolumeTile icon={<HardDrive className="h-4 w-4 text-slate-400" />} label="Выходные данные" value={`${totalMb.toFixed(1)} МБ`} sub={withPlural(doneTiles.length, TILES)} />
           <VolumeTile icon={<Layers className="h-4 w-4 text-amber-500" />} label="Промежуточные" value={`${tempMb.toFixed(1)} МБ`} sub="очищаются после тайла" />
           <VolumeTile icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} label="Готово тайлов" value={`${job.tiles_done}/${job.tiles_total}`} sub={`${job.tiles_failed} с ошибкой`} />
         </div>
@@ -280,7 +274,7 @@ function TileFilesRow({ tile, open, onToggle, onArchive }: { tile: Tile; open: b
           {tile.retry_of && <Badge variant="neutral">повтор</Badge>}
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span>{tile.output_files?.length} файл(ов)</span>
+          <span>{withPlural(tile.output_files?.length ?? 0, FILES)}</span>
           <span className="font-mono">{size.toFixed(1)} МБ</span>
         </div>
       </button>

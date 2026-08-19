@@ -1,0 +1,206 @@
+import type { Job, JobType, ReliefParams, TileStatus } from '@/api/types'
+import type { InputTile } from '@/lib/inputTiles'
+
+const TYPE_LABEL: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }
+
+/**
+ * Имя расчёта по умолчанию — «<Модуль> N», где N продолжает нумерацию расчётов
+ * этого модуля в проекте. Пользователь правит его при запуске и в очереди задач.
+ */
+export function defaultJobName(type: JobType, jobs: Job[], projectId: string): string {
+  const n = jobs.filter((j) => j.project_id === projectId && j.type === type).length + 1
+  return `${TYPE_LABEL[type]} ${n}`
+}
+
+/**
+ * Тайл в списке выбора на вкладке расчёта. Недоступные не исчезают из списка,
+ * а показываются с причиной: пользователь должен видеть, что тайл загружен, но
+ * посчитать его нечем.
+ */
+export interface RunTile {
+  name: string
+  available: boolean
+  reason?: string
+}
+
+/** Какие входные материалы нужны модулю, чтобы тайл вообще можно было считать. */
+const REQUIRED_INPUT: Record<JobType, 'vls' | 'afs'> = {
+  relief: 'vls',
+  forest: 'vls',
+  water: 'afs',
+}
+
+/**
+ * Список тайлов проекта в разрезе одного модуля: что доступно к расчёту, а что
+ * нет и почему. «Рельеф» и «Древостой» считаются по облаку точек, «Вода» — по
+ * ортофотоплану, поэтому недостающий материал сразу снимает тайл с расчёта.
+ */
+export function moduleRunTiles(type: JobType, tiles: InputTile[]): RunTile[] {
+  const need = REQUIRED_INPUT[type]
+  return tiles.map((t) => {
+    const has = need === 'vls' ? !!t.vls : !!t.afs
+    return has
+      ? { name: t.name, available: true }
+      : { name: t.name, available: false, reason: need === 'vls' ? 'нет ВЛС' : 'нет АФС' }
+  })
+}
+
+/** Имена доступных к расчёту тайлов — начальный выбор «все». */
+export function availableNames(runTiles: RunTile[]): string[] {
+  return runTiles.filter((t) => t.available).map((t) => t.name)
+}
+
+export type JobOutcomeVariant = 'neutral' | 'info' | 'warning' | 'success' | 'danger'
+
+const STATUS_VARIANT: Record<Job['status'], JobOutcomeVariant> = {
+  queued: 'neutral', running: 'warning', success: 'success', failed: 'danger', cancelled: 'neutral',
+}
+const STATUS_LABEL: Record<Job['status'], string> = {
+  queued: 'в очереди', running: 'выполняется', success: 'готово', failed: 'ошибка', cancelled: 'отменена',
+}
+
+/**
+ * Исход задачи для подписи. Задача, где часть тайлов упала, всё равно доходит
+ * до статуса success — подписывать её «готово» рядом со счётчиком «6 с ошибкой»
+ * значит вводить в заблуждение.
+ */
+export function jobOutcome(job: Job): { label: string; variant: JobOutcomeVariant } {
+  if (job.status === 'success' && job.tiles_failed > 0) {
+    return { label: 'завершено с ошибками', variant: 'warning' }
+  }
+  return { label: STATUS_LABEL[job.status], variant: STATUS_VARIANT[job.status] }
+}
+
+/**
+ * Группировка «тайл → причина» по причине: список из полутора десятков строк
+ * «сбой: PDAL пустой файл» по одной на тайл нечитаем, а сгруппированный —
+ * сразу показывает, что именно пошло не так и на скольких тайлах.
+ */
+export function groupByReason(items: { name: string; reason?: string }[]): [string, string[]][] {
+  const acc = new Map<string, string[]>()
+  for (const it of items) {
+    const key = it.reason ?? 'данных недостаточно'
+    const names = acc.get(key)
+    if (names) names.push(it.name)
+    else acc.set(key, [it.name])
+  }
+  return [...acc.entries()]
+}
+
+// ---- Полнота сессии «Рельефа» как входа «Древостоя» ----------------------
+
+const TILE_STATUS_REASON: Record<Exclude<TileStatus, 'done'>, string> = {
+  failed: 'расчёт рельефа завершился сбоем',
+  skipped: 'тайл пропущен',
+  queued: 'тайл не считался',
+  running: 'расчёт ещё идёт',
+}
+
+export interface ReliefCompleteness {
+  /** Слои, не построенные во всей сессии: их отключили параметрами расчёта. */
+  missingLayers: string[]
+  /** Тайлы сессии без готового результата — с причиной по каждому. */
+  incompleteTiles: { name: string; reason: string }[]
+  /** Имена тайлов с полным результатом (без расширения файла). */
+  readyTiles: string[]
+}
+
+/** Имя входного тайла из имени тайла задачи: tile_001.tif → tile_001. */
+function baseName(name: string): string {
+  return name.replace(/\.[^.]+$/, '')
+}
+
+/**
+ * Разбор выбранной сессии «Рельефа» как источника данных для «Древостоя».
+ * «Древостою» нужна ЦММ, а при включённой категоризации по уклону — ещё и карта
+ * уклонов: сессия могла быть посчитана без них. Отдельно от этого часть тайлов
+ * сессии могла не досчитаться — по ним данных нет независимо от набора слоёв.
+ */
+export function reliefCompleteness(job: Job | undefined, needSlopes: boolean): ReliefCompleteness {
+  if (!job) return { missingLayers: [], incompleteTiles: [], readyTiles: [] }
+
+  const params = job.params as ReliefParams
+  const missingLayers: string[] = []
+  if (!params.dsm?.enabled) missingLayers.push('ЦММ')
+  if (needSlopes && !params.derivatives?.slopes) missingLayers.push('карта уклонов')
+
+  const incompleteTiles: { name: string; reason: string }[] = []
+  const readyTiles: string[] = []
+  for (const t of job.tiles) {
+    if (t.status === 'done') {
+      readyTiles.push(baseName(t.name))
+    } else {
+      const base = TILE_STATUS_REASON[t.status]
+      incompleteTiles.push({ name: baseName(t.name), reason: t.reason ? `${base}: ${t.reason}` : base })
+    }
+  }
+  // Слоя нет во всей сессии — значит нет и по каждому её тайлу.
+  if (missingLayers.length > 0) {
+    const missing = `в сессии не построена ${missingLayers.join(', ')}`
+    for (const name of readyTiles) incompleteTiles.push({ name, reason: missing })
+    return { missingLayers, incompleteTiles, readyTiles: [] }
+  }
+
+  return { missingLayers, incompleteTiles, readyTiles }
+}
+
+/**
+ * Список тайлов «Древостоя»: доступны только те, по которым выбранная сессия
+ * «Рельефа» дала полный результат. Тайлы проекта, оставшиеся за пределами
+ * сессии, показываются с причиной — иначе их молчаливое исчезновение из списка
+ * выглядит как потеря данных.
+ */
+export function forestRunTiles(
+  tiles: InputTile[],
+  completeness: ReliefCompleteness,
+  hasSession: boolean,
+): RunTile[] {
+  const reasonByName = new Map(completeness.incompleteTiles.map((t) => [t.name, t.reason]))
+  const ready = new Set(completeness.readyTiles)
+
+  return moduleRunTiles('forest', tiles).map((t) => {
+    if (!t.available) return t
+    if (!hasSession) return { ...t, available: false, reason: 'не выбрана сессия «Рельефа»' }
+    if (ready.has(t.name)) return t
+    return { ...t, available: false, reason: reasonByName.get(t.name) ?? 'тайла нет в сессии «Рельефа»' }
+  })
+}
+
+/**
+ * Выбор тайлов, унаследованный от прошлого расчёта проекта. Пользователь уже
+ * решил, какая часть участка его интересует, — заставлять отмечать её заново в
+ * каждом модуле незачем. Берётся последняя запущенная сессия проекта, её набор
+ * пересекается с доступным здесь; пустое пересечение наследовать нечего.
+ */
+export function inheritedSelection(
+  projectId: string,
+  jobs: Job[],
+  available: string[],
+): { names: string[]; from?: string } {
+  const own = jobs.filter((j) => j.project_id === projectId && j.started_at)
+  if (own.length === 0) return { names: available }
+  const latest = own.reduce((a, b) => (a.started_at! > b.started_at! ? a : b))
+
+  const pool = new Set(available)
+  const names = latest.tiles.map((t) => t.name.replace(/\.[^.]+$/, '')).filter((n) => pool.has(n))
+  // Наследовать полный набор — то же самое, что выбрать всё: подпись не нужна.
+  if (names.length === 0 || names.length === available.length) return { names: available }
+  return { names, from: latest.name }
+}
+
+/** Шаги маршрута проекта для пустых экранов: что уже сделано и куда идти дальше. */
+export function projectRoute(projectId: string, jobs: Job[], hasTiles: boolean) {
+  const done = (type: JobType) =>
+    jobs.some((j) => j.project_id === projectId && j.type === type && j.tiles.some((t) => t.status === 'done'))
+  const base = `/projects/${projectId}`
+  return [
+    { label: 'Загрузить данные', to: `${base}/upload`, done: hasTiles,
+      hint: 'Каталоги АФС и ВЛС, оценка материалов по тайлам' },
+    { label: 'Рассчитать рельеф', to: `${base}/relief`, done: done('relief'),
+      hint: 'ЦМР и ЦММ — вход «Древостоя»' },
+    { label: 'Рассчитать древостой', to: `${base}/forest`, done: done('forest'),
+      hint: 'ЦМД, кроны, категории рубки' },
+    { label: 'Рассчитать воду', to: `${base}/water`, done: done('water'),
+      hint: 'Маска воды по ортофотоплану; от «Рельефа» не зависит' },
+  ]
+}
