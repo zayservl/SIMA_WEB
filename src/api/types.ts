@@ -41,8 +41,12 @@ export interface Scene {
   id: string
   afs_dir?: string
   vls_dir?: string
+  /**
+   * Целевая СК проекта. Не выбирается вручную: считывается из метаданных АФС
+   * (в режиме «только ВЛС» — из ВЛС). Материалы с иной СК приводятся к ней
+   * безусловно, поэтому флага «приводить/не приводить» в контракте нет.
+   */
   target_crs?: string
-  reproject: boolean
   deterministic: boolean
   seed: number
 }

@@ -128,7 +128,7 @@ const demoProject: Project = {
   created_at: '2026-06-01T10:00:00Z',
   updated_at: '2026-07-01T12:00:00Z',
   status: 'done',
-  scene: { id: 'scene-001', afs_dir: '/data/demo/afs', vls_dir: '/data/demo/vls', target_crs: '', reproject: true, deterministic: true, seed: 42 },
+  scene: { id: 'scene-001', afs_dir: '/data/demo/afs', vls_dir: '/data/demo/vls', target_crs: '', deterministic: true, seed: 42 },
 }
 
 // Стор сохраняется в localStorage: без этого перезагрузка страницы (или
@@ -162,7 +162,7 @@ export const useProjectStore = create<ProjectStore>()(
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           status: 'empty',
-          scene: { id: 's-' + Math.random().toString(36).slice(2, 9), reproject: true, deterministic: true, seed: 42 },
+          scene: { id: 's-' + Math.random().toString(36).slice(2, 9), deterministic: true, seed: 42 },
         }
         set((s) => ({ projects: [p, ...s.projects] }))
         return p

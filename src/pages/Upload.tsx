@@ -5,7 +5,7 @@ import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Field, InfoHint } from '@/components/ui/controls'
 import { Badge } from '@/components/ui/badge'
-import { FolderOpen, AlertTriangle, CheckCircle2, XCircle, Layers, Grid3x3 } from 'lucide-react'
+import { FolderOpen, AlertTriangle, CheckCircle2, Layers, Grid3x3 } from 'lucide-react'
 import type { MaterialAssessment } from '@/api/types'
 import {
   generateMockInputTiles, CLASS_LABELS, TARGET_CRS,
@@ -20,27 +20,28 @@ const NAMING_TOOLTIP =
   'Файлы, для которых не нашлась пара, показываются как неполные и пропускаются при пакетной обработке. ' +
   'Пробелы, кириллица и точки внутри имени не допускаются.'
 
-type PairStatus = 'ok' | 'reproject' | 'mismatch' | 'incomplete' | 'vls_only' | 'afs_only'
+// Расхождение СК внутри пары не блокирует расчёт: целевая СК проекта — это СК
+// АФС, и материалы с другой СК приводятся к ней безусловно. Единственное, что
+// снимает тайл с обработки, — отсутствие одного из файлов пары.
+type PairStatus = 'ok' | 'reproject' | 'incomplete' | 'vls_only' | 'afs_only'
 
-function pairStatus(t: InputTile, reproject: boolean, mode: InputMode): PairStatus {
+function pairStatus(t: InputTile, mode: InputMode): PairStatus {
   // Отсутствие целого каталога — это режим работы, а не ошибка валидации.
   if (mode === 'vls-only') return t.vls ? 'vls_only' : 'incomplete'
   if (mode === 'afs-only') return t.afs ? 'afs_only' : 'incomplete'
   if (!t.afs || !t.vls) return 'incomplete'
-  if (t.afs.crs === t.vls.crs) return 'ok'
-  return reproject ? 'reproject' : 'mismatch'
+  return t.afs.crs === t.vls.crs ? 'ok' : 'reproject'
 }
 
 const pairLabel: Record<PairStatus, string> = {
   ok: 'СК совпадают',
   reproject: 'СК разнятся → приведение',
-  mismatch: 'СК не совпадают',
   incomplete: 'Неполная пара',
   vls_only: 'Только ВЛС',
   afs_only: 'Только АФС',
 }
 const pairVariant: Record<PairStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  ok: 'success', reproject: 'warning', mismatch: 'danger', incomplete: 'neutral',
+  ok: 'success', reproject: 'warning', incomplete: 'neutral',
   vls_only: 'warning', afs_only: 'warning',
 }
 
@@ -122,7 +123,8 @@ export default function Upload() {
   )
   const [mode, setMode] = useState<InputMode>(() => (storedTiles?.length ? inputMode(storedTiles) : 'pair'))
 
-  const reproject = project?.scene.reproject ?? true
+  // Целевая СК = СК АФС (при режиме «только ВЛС» — СК ВЛС): её считывает
+  // «Оценить материалы», вручную она не задаётся.
   const targetCrs = project?.scene.target_crs || TARGET_CRS
 
   const handleAssess = () => {
@@ -136,11 +138,9 @@ export default function Upload() {
     setInputTiles(projectId, generated)
     setAssessment(projectId, aggregate(generated))
 
-    // СК из первого валидного тайла: АФС приоритетнее ВЛС.
-    const afsTile = generated.find((t) => t.afs)
-    const vlsTile = generated.find((t) => t.vls)
-    const afsCrs = afsTile?.afs?.crs ?? null
-    const vlsCrs = vlsTile?.vls?.crs ?? null
+    // Целевая СК проекта — СК АФС; без АФС берём СК ВЛС.
+    const afsCrs = generated.find((t) => t.afs)?.afs?.crs ?? null
+    const vlsCrs = generated.find((t) => t.vls)?.vls?.crs ?? null
     const detected = afsCrs ?? vlsCrs
     setDetectedCrs(detected)
 
@@ -151,11 +151,11 @@ export default function Upload() {
     setAssessed(true)
   }
 
-  const statuses = tiles.map((t) => pairStatus(t, reproject, mode))
-  const hasMismatch = statuses.includes('mismatch')
-  const hasReproject = statuses.includes('reproject')
+  const statuses = tiles.map((t) => pairStatus(t, mode))
   const hasIncomplete = statuses.includes('incomplete')
-  const canProceed = !hasMismatch && !hasIncomplete
+  // Тайлы, у которых СК ВЛС отличается от целевой — их приводим и называем поимённо.
+  const reprojectTiles = tiles.filter((t, i) => statuses[i] === 'reproject')
+  const canProceed = !hasIncomplete
 
   // Сводка метаданных исходных материалов по обоим типам съёмки.
   const report = tiles.length ? aggregate(tiles) : null
@@ -289,13 +289,13 @@ export default function Upload() {
           <CardPad>
             <CardHeader
               title="Оценка материалов по тайлам"
-              subtitle={`Целевая СК: ${targetCrs} · приведение ${reproject ? 'включено' : 'выключено'}`}
+              subtitle={`Целевая СК: ${targetCrs} — считана из АФС; материалы с иной СК приводятся к ней`}
               action={<Layers className="h-4 w-4 text-slate-400" />}
             />
             {detectedCrs ? (
               <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                СК считана из метаданных: {detectedCrs}
+                Целевая СК проекта — {detectedCrs} (из метаданных {mode === 'vls-only' ? 'ВЛС' : 'АФС'})
               </div>
             ) : (
               <div className="mb-3 flex items-center gap-1.5 text-xs text-amber-600">
@@ -316,7 +316,7 @@ export default function Upload() {
                 </thead>
                 <tbody>
                   {tiles.map((t) => {
-                    const st = pairStatus(t, reproject, mode)
+                    const st = pairStatus(t, mode)
                     return (
                       <tr key={t.id} className="border-b last:border-0">
                         <td className="py-2.5 pr-4 font-mono text-xs">{t.name}</td>
@@ -348,7 +348,6 @@ export default function Upload() {
                           <div className="flex items-center gap-1.5">
                             {st === 'ok' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
                             {st === 'reproject' && <AlertTriangle className="h-4 w-4 text-amber-500" />}
-                            {st === 'mismatch' && <XCircle className="h-4 w-4 text-red-500" />}
                             {st === 'incomplete' && <AlertTriangle className="h-4 w-4 text-slate-400" />}
                             <Badge variant={pairVariant[st]}>{pairLabel[st]}</Badge>
                           </div>
@@ -361,21 +360,15 @@ export default function Upload() {
             </div>
 
             {/* Предупреждения валидации */}
-            {(hasMismatch || hasReproject || hasIncomplete) && (
+            {(reprojectTiles.length > 0 || hasIncomplete) && (
               <div className="mt-3 space-y-2">
-                {hasMismatch && (
-                  <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
-                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div>
-                      Есть пары с несовпадающей СК, а приведение выключено. Включите «Привести к целевой СК» в «Параметрах проекта» — иначе алгоритм отработает некорректно (опыт: «в разных СК не работает»).
-                    </div>
-                  </div>
-                )}
-                {hasReproject && (
+                {reprojectTiles.length > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
-                      Есть пары с разной СК у АФС и ВЛС — они будут приведены к {targetCrs} перед обработкой.
+                      СК ВЛС отличается от СК АФС у {reprojectTiles.length} тайлов
+                      ({reprojectTiles.map((t) => t.name).join(', ')}). Данные будут приведены
+                      к {targetCrs} — целевой СК проекта, считанной из АФС.
                     </div>
                   </div>
                 )}
