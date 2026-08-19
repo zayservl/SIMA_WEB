@@ -520,7 +520,8 @@ export default function Relief() {
                 </Field>
                 {horizontalsInvalid && (
                   <p className="mt-1 text-xs text-amber-600">
-                    Оставлены только положительные числа: {p.vectors.horizontals.join(', ') || 'ни одного'}
+                    Приведено к {p.vectors.horizontals.join(', ') || 'пустому списку'}: оставлены
+                    положительные числа без повторов.
                   </p>
                 )}
               </div>
