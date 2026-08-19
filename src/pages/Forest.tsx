@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader, SMOOTHING_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
-import { Play, AlertTriangle } from 'lucide-react'
+import { Play } from 'lucide-react'
 import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
 import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness, inheritedSelection } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 import { withPlural, TILES } from '@/lib/plural'
+import { Notice } from '@/components/ui/Notice'
 import { diffParams } from '@/lib/params'
 
 // Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
@@ -213,10 +214,11 @@ export default function Forest() {
       </div>
 
       {!deps.ok && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
-        </div>
+        <Notice
+          variant="warning"
+          title={`Не хватает: ${deps.missing.map((m) => m.layer).join(', ')}`}
+          action={`Где взять: вкладка «${deps.missing.map((m) => m.tab).join('», «')}»`}
+        />
       )}
 
       {/* Шапка модуля: СК, сглаживание, разрешение + переключатели источника */}
@@ -267,23 +269,19 @@ export default function Forest() {
             по три слова. Поимённый разбор — ниже, в блоке «Запуск расчёта»,
             там он стоит рядом со списком тайлов. */}
         {completeness.incompleteTiles.length > 0 && (
-          <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="space-y-1">
-              <div className="font-medium">
-                В сессии посчитаны не все данные: «Древостою» доступно{' '}
-                {completeness.readyTiles.length} из{' '}
-                {withPlural(completeness.readyTiles.length + completeness.incompleteTiles.length, TILES)}.
+          <Notice
+            variant="danger"
+            className="mt-3"
+            title={`Не хватает данных сессии: «Древостою» доступно ${completeness.readyTiles.length} из ${withPlural(completeness.readyTiles.length + completeness.incompleteTiles.length, TILES)}`}
+            action="Разбор по каждому тайлу — ниже, в блоке «Запуск расчёта»"
+          >
+            {completeness.missingLayers.length > 0 && (
+              <div>
+                В сессии не построена {completeness.missingLayers.join(', ')} — пересчитайте
+                «Рельеф» с этим слоем либо выберите другую сессию.
               </div>
-              {completeness.missingLayers.length > 0 && (
-                <div>
-                  В сессии не построена {completeness.missingLayers.join(', ')} — пересчитайте
-                  «Рельеф» с этим слоем либо выберите другую сессию.
-                </div>
-              )}
-              <div>Каких данных не хватает по каждому тайлу — в блоке «Запуск расчёта».</div>
-            </div>
-          </div>
+            )}
+          </Notice>
         )}
       </ModuleHeader>
 
@@ -388,13 +386,11 @@ export default function Forest() {
                 disabled={!afsAvailable}
               />
               {!afsAvailable && (
-                <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    АФС не загружены. Детекция крон идёт по ортофотоплану, поэтому расчёт недоступен —
-                    остальные блоки модуля считаются по ВЛС и ЦММ.
-                  </div>
-                </div>
+                <Notice
+                  variant="warning"
+                  title="Не хватает: АФС — детекция крон идёт по ортофотоплану"
+                  action="Где взять: вкладка «Загрузка данных». Остальные блоки модуля считаются по ВЛС и ЦММ."
+                />
               )}
               <div className={`space-y-4 ${detectionEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
                 <p className="hint-base">

@@ -9,7 +9,8 @@ import { Checkbox, Radio, NumberInput, Field, InfoHint, Select, Input } from '@/
 import { ModuleHeader, SMOOTHING_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { RunSetup } from '@/components/ui/RunSetup'
-import { Play, AlertTriangle } from 'lucide-react'
+import { Play } from 'lucide-react'
+import { Notice } from '@/components/ui/Notice'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
 import { defaultJobName, moduleRunTiles, availableNames, inheritedSelection } from '@/lib/jobs'
 import { diffParams } from '@/lib/params'
@@ -195,10 +196,11 @@ export default function Relief() {
       </div>
 
       {!deps.ok && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
-        </div>
+        <Notice
+          variant="warning"
+          title={`Не хватает: ${deps.missing.map((m) => m.layer).join(', ')}`}
+          action={`Где взять: вкладка «${deps.missing.map((m) => m.tab).join('», «')}»`}
+        />
       )}
 
       <ModuleHeader

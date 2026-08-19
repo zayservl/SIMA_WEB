@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button'
 import { NumberInput, Field } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
-import { Play, AlertTriangle } from 'lucide-react'
+import { Play } from 'lucide-react'
+import { Notice } from '@/components/ui/Notice'
 import type { WaterParams, Job } from '@/api/types'
 import { defaultJobName, moduleRunTiles, availableNames, inheritedSelection } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
@@ -70,10 +71,11 @@ export default function Water() {
       </div>
 
       {!deps.ok && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
-        </div>
+        <Notice
+          variant="warning"
+          title={`Не хватает: ${deps.missing.map((m) => m.layer).join(', ')}`}
+          action={`Где взять: вкладка «${deps.missing.map((m) => m.tab).join('», «')}»`}
+        />
       )}
 
       {/* Шапка модуля: СК + единственный источник — АФС */}

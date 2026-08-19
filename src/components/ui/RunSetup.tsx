@@ -6,18 +6,19 @@ import { useState } from 'react'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Field, Input } from '@/components/ui/controls'
 import { cn } from '@/lib/utils'
-import { AlertTriangle, Grid3x3, Search, ListChecks } from 'lucide-react'
+import { Grid3x3, Search, ListChecks } from 'lucide-react'
+import { Notice } from '@/components/ui/Notice'
 import { availableNames, groupByReason, type RunTile } from '@/lib/jobs'
 import { withPlural, TILES, TILES_GEN } from '@/lib/plural'
 
-// Перечисление имён полезно, пока их можно охватить взглядом. Два десятка
-// имён в строку — шум: там достаточно числа, сами тайлы видны в списке выше.
+// Перечисление имён полезно, пока список можно охватить взглядом целиком.
+// Обрывок «первые десять из двадцати трёх» не помогает ни найти тайл, ни
+// оценить масштаб — там достаточно числа, сами тайлы видны в списке выше.
 const NAMES_LIMIT = 10
 
 function namesLabel(names: string[], total: number): string {
   if (names.length === total) return 'все тайлы проекта'
-  if (names.length <= NAMES_LIMIT) return names.join(', ')
-  return `${names.slice(0, NAMES_LIMIT).join(', ')} и ещё ${withPlural(names.length - NAMES_LIMIT, TILES)}`
+  return names.length <= NAMES_LIMIT ? names.join(', ') : withPlural(names.length, TILES)
 }
 
 type TileFilter = 'all' | 'available' | 'unavailable'
@@ -160,19 +161,17 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
             )}
 
             {unavailable.length > 0 && (
-              <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div className="space-y-1">
-                  <div>
-                    Данных недостаточно для {withPlural(unavailable.length, TILES_GEN)} — они недоступны к расчёту:
+              <Notice
+                variant="warning"
+                className="mt-2"
+                title={`Не хватает данных для ${withPlural(unavailable.length, TILES_GEN)} — они недоступны к расчёту`}
+              >
+                {byReason.map(([reason, names]) => (
+                  <div key={reason}>
+                    {reason} — {namesLabel(names, tiles.length)}
                   </div>
-                  {byReason.map(([reason, names]) => (
-                    <div key={reason}>
-                      <span className="font-medium">{reason}</span> — {namesLabel(names, tiles.length)}
-                    </div>
-                  ))}
-                </div>
-              </div>
+                ))}
+              </Notice>
             )}
 
             {available.length > 0 && selected.length === 0 && (
