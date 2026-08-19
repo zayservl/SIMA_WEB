@@ -19,7 +19,8 @@ export type ProjectStatus = 'empty' | 'uploaded' | 'processing' | 'done' | 'erro
 
 // 'custom' — пользовательские настройки: значения берутся не из пресета, а из
 // явных полей (smoothing.* для сглаживания, output_resolution_m для разрешения).
-export type SmoothingPreset = 'light' | 'medium' | 'strong' | 'custom'
+// 'off' — сглаживание не выполняется (backend: smoothing.enabled=False).
+export type SmoothingPreset = 'off' | 'light' | 'medium' | 'strong' | 'custom'
 export type ResolutionPreset = 'native' | '0.1m' | '0.25m' | '0.5m' | '1m' | '2m' | 'custom'
 
 export interface ReliefSource {

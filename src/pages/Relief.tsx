@@ -6,7 +6,7 @@ import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, InfoHint, Select, Input } from '@/components/ui/controls'
-import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
+import { ModuleHeader, SMOOTHING_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
@@ -110,8 +110,10 @@ export default function Relief() {
       smoothing_preset: v,
       smoothing: {
         ...s.smoothing,
-        enabled: true,
-        sigma: v === 'custom' ? s.smoothing.sigma : SIGMA_BY_PRESET[v],
+        enabled: v !== 'off',
+        // «Пользовательское» и «Без сглаживания» значения фильтра не трогают:
+        // при возврате к пресету они перезапишутся, а до тех пор сохраняются.
+        ...(v === 'custom' || v === 'off' ? {} : SMOOTHING_BY_PRESET[v]),
       },
     }))
   }
@@ -215,7 +217,7 @@ export default function Relief() {
               {p.filter_method === 'manual' && (
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Z min"><NumberInput value={p.filter.spm_min || 0} onChange={(v) => set('filter', { ...p.filter, spm_min: v })} /></Field>
-                  <Field label="Z max"><NumberInput value={p.filter.spm_max || 100} onChange={(v) => set('filter', { ...p.filter, spm_max: v })} /></Field>
+                  <Field label="Z max"><NumberInput value={p.filter.spm_max || 1000} onChange={(v) => set('filter', { ...p.filter, spm_max: v })} /></Field>
                 </div>
               )}
               {p.filter_method === 'stat' && (

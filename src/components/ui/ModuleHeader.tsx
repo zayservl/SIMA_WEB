@@ -19,11 +19,15 @@ export interface CustomSmoothing {
   window: number
 }
 
-/** Пресет сглаживания → sigma. Общий для «Рельефа» и «Древостоя». */
-export const SIGMA_BY_PRESET: Record<Exclude<SmoothingPreset, 'custom'>, number> = {
-  light: 0.5,
-  medium: 1.0,
-  strong: 2.0,
+/**
+ * Пресет сглаживания → параметры гауссова фильтра. Общий для «Рельефа» и
+ * «Древостоя». Окно входит в пресет наравне с сигмой: у сильного сглаживания
+ * ядро шире, и в relief_demo эксперт задаёт именно пару 2.0 / 5.
+ */
+export const SMOOTHING_BY_PRESET: Record<Exclude<SmoothingPreset, 'custom' | 'off'>, { sigma: number; window: number }> = {
+  light: { sigma: 0.5, window: 3 },
+  medium: { sigma: 1.0, window: 3 },
+  strong: { sigma: 2.0, window: 5 },
 }
 
 interface ModuleHeaderProps {
@@ -47,6 +51,7 @@ interface ModuleHeaderProps {
 }
 
 const SMOOTHING_OPTIONS: { value: SmoothingPreset; label: string }[] = [
+  { value: 'off', label: 'Без сглаживания' },
   { value: 'light', label: 'Слабое' },
   { value: 'medium', label: 'Среднее' },
   { value: 'strong', label: 'Сильное' },

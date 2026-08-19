@@ -4,36 +4,51 @@ import type { Project, Scene, MaterialAssessment, Job, ReliefParams, ForestParam
 import { generateTiles, newSessionId } from '@/lib/tiles'
 import type { InputTile } from '@/lib/inputTiles'
 
-// Параметры по умолчанию. «Рельеф» отдаёт полный набор выходов — ЦМР, ЦММ,
-// TPI, уклоны и экспозиции включены изначально; сервис гейтит каждый шаг своим
-// флагом (service.py::_run_tile), поэтому флаги остаются в контракте.
+// Параметры по умолчанию воспроизводят конфигурацию тестовых ноутбуков
+// (backend/relief_demo.ipynb cell 7, benchmarks/relief_bench.py): прототип
+// должен открываться на той же настройке, на которой снималась точность.
+// «Рельеф» отдаёт полный набор выходов — ЦМР, ЦММ, TPI, уклоны и экспозиции
+// включены изначально; сервис гейтит каждый шаг своим флагом
+// (service.py::_run_tile), поэтому флаги остаются в контракте.
 export const defaultReliefParams: ReliefParams = {
   filter_method: 'smrf',
-  filter: { spm_min: 0, spm_max: 100, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
+  // spm_max=1000 — тот же fallback, что в contract.filter_kwargs; прежние 100
+  // отсекали бы всё выше сотни метров.
+  filter: { spm_min: 0, spm_max: 1000, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
   smrf: { slope: 0.2, window: 16, threshold: 0.45, scalar: 1.2, cut_smrf: false, cut_threshold: 3, elm: true, outlier: true },
-  smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
-  smoothing_preset: 'medium',
-  output_resolution_preset: 'native',
+  // Сглаживание ЦМР: sigma 2.0 / окно 5 — значения эксперта, пресет «Сильное».
+  smoothing: { enabled: true, sigma: 2.0, order: 0, window: 5 },
+  smoothing_preset: 'strong',
+  // Разрешение расчёта 1 м — RESOLUTION во всех трёх ноутбуках рельефа.
+  output_resolution_preset: '1m',
   output_resolution_m: 1,
   // Растеризация ЦМР: idw — умолчание RasterOutputConfig в sima-dem-ground.
   dtm: { output_type: 'idw' },
+  // Пустоты заполняются целиком, включая приграничные (edge_extrapolation_m
+  // заведомо больше номенклатурного листа), радиус поиска 400 пикс, а
+  // гидровыравнивание выключено: во всех эталонных прогонах оно отключено —
+  // на тайлах без водоёмов оно ошибочно выравнивает крупные пустоты съёмки.
   dsm: {
     enabled: true, output_type: 'max', interpolate: true, fill_holes: true,
-    max_search_distance: 100, edge_extrapolation_m: 5,
-    fill_method: 'laplace', fill_passes: 3, hydro_flatten: true,
+    max_search_distance: 400, edge_extrapolation_m: 10_000,
+    fill_method: 'laplace', fill_passes: 3, hydro_flatten: false,
   },
   derivatives: {
     slopes: true, slopes_res: 1,
     aspect: true, aspect_res: 1,
     tpi: true, tpi_res: 10, tpi_radii: [270, 810, 2430],
     // interpolation/inter_amp управляют заполнением пустот ЦМР (step_dtm →
-    // FillConfig): значения выровнены с DerivativesParams бэкенда (True/100).
-    interpolation: true, inter_amp: 100, edge_extrapolation_m: 5,
-    fill_method: 'laplace', fill_passes: 3, hydro_flatten: true,
+    // FillConfig). Радиус поиска 400 пикс — FILL_SEARCH_PX ноутбуков.
+    interpolation: true, inter_amp: 400, edge_extrapolation_m: 10_000,
+    fill_method: 'laplace', fill_passes: 3, hydro_flatten: false,
   },
-  heights: { enabled: false, source: 'las', min_distance_m: 10 },
-  vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
-  save_measured_mask: false,
+  // Отметки и TIN — выходы Q3: в ноутбуках включены, значит и в прототипе
+  // расчёт «как открылось» должен их давать.
+  heights: { enabled: true, source: 'las', min_distance_m: 10 },
+  vectors: { horizontals: [0.5, 2, 5, 10], tin: true },
+  // relief_demo запускает сервис с save_measured_mask=True: без этого слоя не
+  // отличить точность построения ЦМР от точности заполнения пустот.
+  save_measured_mask: true,
   target_crs: '',
   deterministic: true, seed: 42,
 }
@@ -73,8 +88,9 @@ export const defaultForestParams: ForestParams = {
     height_limits_m: [1, 5, 16],
     slope_rule: { enabled: false, threshold_deg: 15 },
   },
-  smoothing_preset: 'medium',
-  smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
+  // Полог в forest_s3_yuilskiy не сглаживается: CHMConfig.smooth=False.
+  smoothing_preset: 'off',
+  smoothing: { enabled: false, sigma: 1.0, order: 0, window: 3 },
   // Разрешение расчёта ЦМД: 0.5 м — умолчание CHMConfig и значение эксперта
   // в forest_s3_yuilskiy (СИМА 1.44, Юильский).
   output_resolution_preset: '0.5m',
