@@ -7,6 +7,7 @@ import { Field, Input } from '@/components/ui/controls'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Grid3x3 } from 'lucide-react'
 import { availableNames, groupByReason, type RunTile } from '@/lib/jobs'
+import { withPlural, TILES } from '@/lib/plural'
 
 export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange }: {
   name: string
@@ -94,7 +95,7 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div className="space-y-1">
                   <div>
-                    Данных недостаточно для {unavailable.length} тайлов — они недоступны к расчёту:
+                    Данных недостаточно для {withPlural(unavailable.length, TILES)} — они недоступны к расчёту:
                   </div>
                   {byReason.map(([reason, names]) => (
                     <div key={reason}>

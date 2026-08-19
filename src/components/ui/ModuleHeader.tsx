@@ -162,22 +162,22 @@ export function ModuleHeader({
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
             <div className="mb-2 flex items-center gap-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры гауссова фильтра</span>
-              <InfoHint text="Параметры, доступные алгоритму сглаживания: sigma (умножается на пространственное разрешение растра), order — порядок производной гауссианы, window — размер окна фильтра в пикселях." />
+              <InfoHint text="Параметры гауссова фильтра: сигма умножается на пространственное разрешение растра, порядок — производная гауссианы (0 — обычное сглаживание), окно — размер ядра в пикселях." />
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <Field label="sigma" tooltip="Коэффициент умножается на пространственное разрешение растра. Чем больше — тем сильнее сглаживание.">
+              <Field label="Сигма" tooltip="Коэффициент умножается на пространственное разрешение растра. Чем больше — тем сильнее сглаживание.">
                 <NumberInput
                   value={customSmoothing!.sigma} step={0.1} min={0}
                   onChange={(v) => onCustomSmoothingChange!({ sigma: v })}
                 />
               </Field>
-              <Field label="order" tooltip="Порядок производной гауссова фильтра. 0 — обычное сглаживание.">
+              <Field label="Порядок" tooltip="Порядок производной гауссова фильтра. 0 — обычное сглаживание.">
                 <NumberInput
                   value={customSmoothing!.order} min={0}
                   onChange={(v) => onCustomSmoothingChange!({ order: v })}
                 />
               </Field>
-              <Field label="window" tooltip="Размер окна фильтра в пикселях — определяет усечение ядра (truncate).">
+              <Field label="Окно, пикс" tooltip="Размер окна фильтра в пикселях — определяет усечение ядра (truncate).">
                 <NumberInput
                   value={customSmoothing!.window} min={1}
                   onChange={(v) => onCustomSmoothingChange!({ window: v })}

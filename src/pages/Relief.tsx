@@ -21,7 +21,7 @@ const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
   manual: 'Ручная',
   stat: 'Статистическая',
   range: 'Перцентильная',
-  kmeans: 'Outlier',
+  kmeans: 'Отсев выбросов',
 }
 
 // Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
@@ -199,7 +199,7 @@ export default function Relief() {
                   <InfoHint text={METHOD_TOOLTIPS.range} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <Radio checked={p.filter_method === 'kmeans'} onChange={() => set('filter_method', 'kmeans')} label="Outlier" />
+                  <Radio checked={p.filter_method === 'kmeans'} onChange={() => set('filter_method', 'kmeans')} label="Отсев выбросов" />
                   <InfoHint text={METHOD_TOOLTIPS.kmeans} />
                 </span>
               </div>
@@ -237,17 +237,25 @@ export default function Relief() {
                 <div className="border-t border-slate-100 pt-3">
                   <div className="mb-2 flex items-center gap-2">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры SMRF</span>
-                    <InfoHint text="Simple Morphological Filter — алгоритм выделения точек рельефа. Параметры по умолчанию: slope=0.2, window=16, threshold=0.45, scalar=1.2." />
+                    <InfoHint text="Simple Morphological Filter — алгоритм выделения точек рельефа. Параметры по умолчанию: уклон 0.2, окно 16 м, порог 0.45 м, множитель 1.2." />
                   </div>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Field label="slope"><NumberInput value={p.smrf.slope} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, slope: v })} /></Field>
-                    <Field label="window"><NumberInput value={p.smrf.window} onChange={(v) => set('smrf', { ...p.smrf, window: v })} /></Field>
-                    <Field label="threshold"><NumberInput value={p.smrf.threshold} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, threshold: v })} /></Field>
-                    <Field label="scalar"><NumberInput value={p.smrf.scalar} step={0.1} onChange={(v) => set('smrf', { ...p.smrf, scalar: v })} /></Field>
+                    <Field label="Уклон" tooltip="slope — предельный уклон морфологического окна, доля. Выше него точка не считается землёй.">
+                      <NumberInput value={p.smrf.slope} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, slope: v })} />
+                    </Field>
+                    <Field label="Окно, м" tooltip="window — максимальный размер морфологического окна: задаёт наибольший объект, который фильтр снимет с поверхности земли.">
+                      <NumberInput value={p.smrf.window} onChange={(v) => set('smrf', { ...p.smrf, window: v })} />
+                    </Field>
+                    <Field label="Порог, м" tooltip="threshold — допуск превышения над поверхностью, м. Точки выше относятся к объектам.">
+                      <NumberInput value={p.smrf.threshold} step={0.05} onChange={(v) => set('smrf', { ...p.smrf, threshold: v })} />
+                    </Field>
+                    <Field label="Множитель порога" tooltip="scalar — во сколько раз допуск растёт с уклоном местности.">
+                      <NumberInput value={p.smrf.scalar} step={0.1} onChange={(v) => set('smrf', { ...p.smrf, scalar: v })} />
+                    </Field>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-4">
-                    <Checkbox checked={p.smrf.elm} onChange={(v) => set('smrf', { ...p.smrf, elm: v })} label="ELM-фильтр" />
-                    <Checkbox checked={p.smrf.outlier} onChange={(v) => set('smrf', { ...p.smrf, outlier: v })} label="Outlier-фильтр" />
+                    <Checkbox checked={p.smrf.elm} onChange={(v) => set('smrf', { ...p.smrf, elm: v })} label="Отсев низких выбросов (ELM)" />
+                    <Checkbox checked={p.smrf.outlier} onChange={(v) => set('smrf', { ...p.smrf, outlier: v })} label="Отсев статистических выбросов" />
                     <Checkbox checked={p.smrf.cut_smrf} onChange={(v) => set('smrf', { ...p.smrf, cut_smrf: v })} label="Доп. отсечение" />
                   </div>
                 </div>

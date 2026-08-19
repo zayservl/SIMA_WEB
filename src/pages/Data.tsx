@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
+import { withPlural, TILES, FILES } from '@/lib/plural'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -219,7 +220,7 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
 
         {/* Сводка объёмов */}
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <VolumeTile icon={<HardDrive className="h-4 w-4 text-slate-400" />} label="Выходные данные" value={`${totalMb.toFixed(1)} МБ`} sub={`${doneTiles.length} тайл(ов)`} />
+          <VolumeTile icon={<HardDrive className="h-4 w-4 text-slate-400" />} label="Выходные данные" value={`${totalMb.toFixed(1)} МБ`} sub={withPlural(doneTiles.length, TILES)} />
           <VolumeTile icon={<Layers className="h-4 w-4 text-amber-500" />} label="Промежуточные" value={`${tempMb.toFixed(1)} МБ`} sub="очищаются после тайла" />
           <VolumeTile icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} label="Готово тайлов" value={`${job.tiles_done}/${job.tiles_total}`} sub={`${job.tiles_failed} с ошибкой`} />
         </div>
@@ -275,7 +276,7 @@ function TileFilesRow({ tile, open, onToggle, onArchive }: { tile: Tile; open: b
           {tile.retry_of && <Badge variant="neutral">повтор</Badge>}
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span>{tile.output_files?.length} файл(ов)</span>
+          <span>{withPlural(tile.output_files?.length ?? 0, FILES)}</span>
           <span className="font-mono">{size.toFixed(1)} МБ</span>
         </div>
       </button>
