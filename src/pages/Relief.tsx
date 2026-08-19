@@ -12,6 +12,7 @@ import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
 import { defaultJobName, moduleRunTiles, availableNames, inheritedSelection } from '@/lib/jobs'
+import { diffParams } from '@/lib/params'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies } from '@/lib/dependencies'
 
@@ -168,6 +169,11 @@ export default function Relief() {
     ]
   }, [p])
 
+  // Экспертная настройка скрыта по умолчанию: в типовой работе трогают метод
+  // классификации, состав выходов и сглаживание, а не радиусы заполнения.
+  const [expert, setExpert] = useState(false)
+  const changes = useMemo(() => diffParams(p, defaultReliefParams), [p])
+
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
   const deps = checkDependencies(projectId || '', 'relief')
@@ -205,6 +211,10 @@ export default function Relief() {
         onCustomSmoothingChange={(patch) => setP((s) => ({ ...s, smoothing: { ...s.smoothing, ...patch } }))}
         customResolutionM={p.output_resolution_m}
         onCustomResolutionChange={(v) => set('output_resolution_m', v)}
+        expert={expert}
+        onExpertChange={setExpert}
+        changes={changes}
+        onReset={() => { setP(defaultReliefParams); setHorizontalsText(defaultReliefParams.vectors.horizontals.join(', ')) }}
       />
 
       <RunSetup
@@ -276,7 +286,7 @@ export default function Relief() {
                 когда она есть в файле, — отдельного метода для неё нет.
               </p>
 
-              {p.filter_method === 'smrf' && (
+              {p.filter_method === 'smrf' && expert && (
                 <div className="border-t border-slate-100 pt-3">
                   <div className="mb-2 flex items-center gap-2">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры SMRF</span>
@@ -318,6 +328,8 @@ export default function Relief() {
         </CardPad>
       </Card>
 
+      {expert && (
+      <>
       {/* ЦМР — основной выход модуля. Растеризация выполняется до заполнения
           пустот, поэтому вынесена отдельно от блока «Интерполяция». */}
       <Card>
@@ -346,6 +358,9 @@ export default function Relief() {
         </CardPad>
       </Card>
 
+      </>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-2">
         {/* ЦММ — второй основной выход модуля, вход «Древостоя» */}
         <Card>
@@ -361,7 +376,7 @@ export default function Relief() {
                   ЦММ (поверхность вместе с объектами) — вход модуля «Древостой». Без неё сессия не появится
                   в списке источников ЦММ.
                 </p>
-                <div className={`space-y-3 ${p.dsm.enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                <div className={`space-y-3 ${p.dsm.enabled && expert ? '' : 'hidden'}`}>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Агрегация точек" tooltip="Как высота точек сводится в пиксель растра: max — верхняя точка (легаси CMD.py), mean — среднее, idw — обратно взвешенное расстояние.">
                       <Select
@@ -472,6 +487,7 @@ export default function Relief() {
 
       {/* Заполнение пустот ЦМР — единственный слой, где оно выполняется:
           уклоны и экспозиции строятся gdal.DEMProcessing из уже заполненной ЦМР. */}
+      {expert && (
       <Card>
         <CardPad>
           <Accordion title="Интерполяция и экстраполяция">
@@ -515,6 +531,8 @@ export default function Relief() {
           </Accordion>
         </CardPad>
       </Card>
+
+      )}
 
       {/* Высоты + TIN */}
       <Card>

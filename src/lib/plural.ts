@@ -17,4 +17,6 @@ export function withPlural(n: number, forms: [string, string, string]): string {
 }
 
 export const TILES: [string, string, string] = ['тайл', 'тайла', 'тайлов']
+/** Родительный падеж: «для 1 тайла», «для 5 тайлов». */
+export const TILES_GEN: [string, string, string] = ['тайла', 'тайлов', 'тайлов']
 export const FILES: [string, string, string] = ['файл', 'файла', 'файлов']

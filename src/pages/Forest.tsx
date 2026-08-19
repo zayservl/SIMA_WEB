@@ -13,6 +13,7 @@ import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness, inh
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 import { withPlural, TILES } from '@/lib/plural'
+import { diffParams } from '@/lib/params'
 
 // Повтор ранее посчитанной сессии: её параметры могли быть сохранены до
 // изменения контракта, поэтому недостающие поля добираем из умолчаний.
@@ -94,6 +95,9 @@ export default function Forest() {
     addJob(job)
     navigate(`/projects/${projectId}/tasks`)
   }
+
+  const [expert, setExpert] = useState(false)
+  const changes = useMemo(() => diffParams(p, defaultForestParams), [p])
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
@@ -224,6 +228,10 @@ export default function Forest() {
         onResolutionChange={(v: ResolutionPreset) => set('output_resolution_preset', v)}
         customResolutionM={p.output_resolution_m}
         onCustomResolutionChange={(v) => set('output_resolution_m', v)}
+        expert={expert}
+        onExpertChange={setExpert}
+        changes={changes}
+        onReset={() => setP(defaultForestParams)}
         customSmoothing={p.smoothing}
         onCustomSmoothingChange={(patch) => setP((s) => ({ ...s, smoothing: { ...s.smoothing, ...patch } }))}
       >
@@ -330,6 +338,7 @@ export default function Forest() {
                 </div>
 
                 {/* Заполнение пустот полога */}
+                {expert && (
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="mb-2 flex items-center gap-1.5">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Заполнение пустот полога</span>
@@ -360,6 +369,7 @@ export default function Forest() {
                     </Field>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </Accordion>
@@ -418,7 +428,7 @@ export default function Forest() {
                       <NumberInput value={p.detection.smooth_radius_px} min={0} onChange={(v) => set('detection', { ...p.detection, smooth_radius_px: v })} />
                     </Field>
                   </div>
-                  <div className="mt-3">
+                  <div className={`mt-3 ${expert ? '' : 'hidden'}`}>
                     <span className="inline-flex items-center gap-1.5">
                       <Checkbox
                         checked={p.detection.height_from_smoothed}
@@ -432,6 +442,7 @@ export default function Forest() {
                 </div>
 
                 {/* Корректировка вершин по АФС */}
+                {expert && (
                 <div className="rounded-lg border border-slate-200 p-3">
                   <span className="inline-flex items-center gap-1.5">
                     <Checkbox
@@ -468,8 +479,10 @@ export default function Forest() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* Поверхность стоимости водораздела */}
+                {expert && (
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="mb-2 flex items-center gap-1.5">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Границы крон: веса признаков</span>
@@ -498,6 +511,7 @@ export default function Forest() {
                     </Field>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </Accordion>
@@ -505,6 +519,7 @@ export default function Forest() {
       </Card>
 
       {/* Статистики ТЛО */}
+      {expert && (
       <Card>
         <CardPad>
           <Accordion title="Статистики по сегментам крон" defaultOpen={false}>
@@ -547,6 +562,8 @@ export default function Forest() {
           </Accordion>
         </CardPad>
       </Card>
+
+      )}
 
       {/* Категория рубки */}
       <Card>

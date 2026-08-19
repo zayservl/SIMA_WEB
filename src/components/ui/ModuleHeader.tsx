@@ -3,8 +3,10 @@
 // Повторяющийся блок вынесен в один компонент, чтобы страницы модулей
 // сосредоточились на специфичных параметрах.
 
-import type { ReactNode } from 'react'
-import { Globe, AlertTriangle } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { Globe, AlertTriangle, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react'
+import { formatValue, type ParamChange } from '@/lib/params'
+import { Button } from '@/components/ui/button'
 import type { SmoothingPreset, ResolutionPreset } from '@/api/types'
 import { useProjectStore } from '@/store/projectStore'
 import { Select, Field, InfoHint, NumberInput } from '@/components/ui/controls'
@@ -47,6 +49,15 @@ interface ModuleHeaderProps {
   customResolutionM?: number
   onCustomResolutionChange?: (v: number) => void
   methodTooltips?: ReactNode
+  /**
+   * Режим «Все параметры». В основном режиме на экране остаётся то, что
+   * задаётся в типовой работе; экспертная настройка скрыта, но в один клик.
+   */
+  expert?: boolean
+  onExpertChange?: (v: boolean) => void
+  /** Отличия текущей настройки от эталонной (умолчаний). */
+  changes?: ParamChange[]
+  onReset?: () => void
   children?: ReactNode
 }
 
@@ -85,8 +96,13 @@ export function ModuleHeader({
   customResolutionM,
   onCustomResolutionChange,
   methodTooltips,
+  expert,
+  onExpertChange,
+  changes,
+  onReset,
   children,
 }: ModuleHeaderProps) {
+  const [changesOpen, setChangesOpen] = useState(false)
   const projects = useProjectStore((s) => s.projects)
   const project = projects.find((p) => p.id === projectId)
   const crs = project?.scene.target_crs ?? ''
@@ -207,6 +223,61 @@ export function ModuleHeader({
                 />
               </Field>
             </div>
+          </div>
+        )}
+
+        {/* Режим отображения параметров и отличия от эталонной настройки */}
+        {(onExpertChange || changes) && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
+            {onExpertChange && (
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
+                {([false, true] as const).map((v) => (
+                  <button
+                    key={String(v)}
+                    type="button"
+                    onClick={() => onExpertChange(v)}
+                    className={cn(
+                      'rounded-md px-3 py-1 text-xs transition-colors',
+                      expert === v ? 'bg-white font-medium text-slate-700 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                    )}
+                  >
+                    {v ? 'Все параметры' : 'Основные'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {changes && (
+              changes.length === 0 ? (
+                <span className="text-xs text-slate-400">настройка эталонная</span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setChangesOpen((v) => !v)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700"
+                  >
+                    {changesOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    изменено параметров: {changes.length}
+                  </button>
+                  {onReset && (
+                    <Button variant="outline" size="sm" onClick={onReset} title="Вернуть параметры модуля к эталонным — тем, на которых снималась точность">
+                      <RotateCcw className="h-3 w-3" /> Откатить настройки
+                    </Button>
+                  )}
+                </>
+              )
+            )}
+          </div>
+        )}
+        {changes && changesOpen && changes.length > 0 && (
+          <div className="mt-2 max-h-40 overflow-y-auto rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+            <ul className="space-y-0.5">
+              {changes.map((c) => (
+                <li key={c.path}>
+                  <span className="font-mono">{c.path}</span>: {formatValue(c.from)} → <b>{formatValue(c.to)}</b>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
