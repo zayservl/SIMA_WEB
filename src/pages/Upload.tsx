@@ -166,6 +166,7 @@ export default function Upload() {
     .map((t) => ({ tile: t, offset: originOffsetM(t) }))
     .filter((r): r is { tile: InputTile; offset: number } => r.offset !== null && r.offset > originTolM)
   const canProceed = !hasIncomplete
+  const incompleteTiles = tiles.filter((t, i) => statuses[i] === 'incomplete')
 
   // Сводка метаданных исходных материалов по обоим типам съёмки.
   const report = tiles.length ? aggregate(tiles) : null
@@ -299,7 +300,7 @@ export default function Upload() {
           <CardPad>
             <CardHeader
               title="Оценка материалов по тайлам"
-              subtitle={`Целевая СК: ${targetCrs} — считана из АФС; материалы с иной СК приводятся к ней`}
+              subtitle="Спаривание файлов, приведение СК и сверка геопривязки" 
               action={<Layers className="h-4 w-4 text-slate-400" />}
             />
             {detectedCrs ? (
@@ -419,7 +420,8 @@ export default function Upload() {
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
-                      Есть неполные пары (нет АФС или ВЛС). Такие тайлы будут пропущены при пакетной обработке.
+                      Неполные пары — нет АФС или ВЛС: {incompleteTiles.map((t) => t.name).join(', ')}.
+                      Такие тайлы недоступны для расчёта.
                     </div>
                   </div>
                 )}

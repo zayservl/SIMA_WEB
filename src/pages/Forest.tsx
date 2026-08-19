@@ -13,6 +13,7 @@ import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset
 import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
+import { withPlural, TILES } from '@/lib/plural'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
 // блока не задаются — их подбирает модель, поля гасятся вызывающим кодом.
@@ -224,7 +225,7 @@ export default function Forest() {
             <option value="">— выбрать сессию —</option>
             {reliefJobs.map((j) => (
               <option key={j.id} value={j.session_id ?? j.id}>
-                {j.name} · {j.tiles_done}/{j.tiles_total} тайлов · {j.session_id ?? j.id}
+                {j.name} · готово {j.tiles_done} из {j.tiles_total} · {j.session_id ?? j.id}
               </option>
             ))}
           </Select>
@@ -239,28 +240,30 @@ export default function Forest() {
             <p className="hint-base mt-1.5">Производные рельефа подставляются из выбранной сессии автоматически</p>
           )}
 
-          {/* Неполнота выбранной сессии. Поимённый разбор — ниже, в блоке
-              «Запуск расчёта»: там он шире и стоит рядом со списком тайлов. */}
-          {completeness.incompleteTiles.length > 0 && (
-            <div className="mt-2 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div className="space-y-1">
-                <div className="font-medium">
-                  В сессии посчитаны не все данные: «Древостою» доступно{' '}
-                  {completeness.readyTiles.length} из{' '}
-                  {completeness.readyTiles.length + completeness.incompleteTiles.length} тайлов.
-                </div>
-                {completeness.missingLayers.length > 0 && (
-                  <div>
-                    В сессии не построена {completeness.missingLayers.join(', ')} — пересчитайте
-                    «Рельеф» с этим слоем либо выберите другую сессию.
-                  </div>
-                )}
-                <div>Каких данных не хватает по каждому тайлу — в блоке «Запуск расчёта».</div>
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* Неполнота сессии — на всю ширину: в колонке выбора текст переносился
+            по три слова. Поимённый разбор — ниже, в блоке «Запуск расчёта»,
+            там он стоит рядом со списком тайлов. */}
+        {completeness.incompleteTiles.length > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              <div className="font-medium">
+                В сессии посчитаны не все данные: «Древостою» доступно{' '}
+                {completeness.readyTiles.length} из{' '}
+                {withPlural(completeness.readyTiles.length + completeness.incompleteTiles.length, TILES)}.
+              </div>
+              {completeness.missingLayers.length > 0 && (
+                <div>
+                  В сессии не построена {completeness.missingLayers.join(', ')} — пересчитайте
+                  «Рельеф» с этим слоем либо выберите другую сессию.
+                </div>
+              )}
+              <div>Каких данных не хватает по каждому тайлу — в блоке «Запуск расчёта».</div>
+            </div>
+          </div>
+        )}
       </ModuleHeader>
 
       <RunSetup

@@ -9,6 +9,16 @@ import { AlertTriangle, Grid3x3 } from 'lucide-react'
 import { availableNames, groupByReason, type RunTile } from '@/lib/jobs'
 import { withPlural, TILES } from '@/lib/plural'
 
+// Перечисление имён полезно, пока их можно охватить взглядом. Два десятка
+// имён в строку — шум: там достаточно числа, сами тайлы видны в списке выше.
+const NAMES_LIMIT = 10
+
+function namesLabel(names: string[], total: number): string {
+  if (names.length === total) return 'все тайлы проекта'
+  if (names.length <= NAMES_LIMIT) return names.join(', ')
+  return `${names.slice(0, NAMES_LIMIT).join(', ')} и ещё ${withPlural(names.length - NAMES_LIMIT, TILES)}`
+}
+
 export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange }: {
   name: string
   onNameChange: (v: string) => void
@@ -65,7 +75,7 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
                 «Загрузка данных».
               </p>
             ) : (
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 p-2">
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 p-2">
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
                   {tiles.map((t) => (
                     <label
@@ -99,9 +109,7 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
                   </div>
                   {byReason.map(([reason, names]) => (
                     <div key={reason}>
-                      <span className="font-medium">{reason}</span> —{' '}
-                      {/* Причина, накрывшая весь каталог, поимённого списка не проясняет. */}
-                      {names.length === tiles.length ? 'все тайлы проекта' : names.join(', ')}
+                      <span className="font-medium">{reason}</span> — {namesLabel(names, tiles.length)}
                     </div>
                   ))}
                 </div>
