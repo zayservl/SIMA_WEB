@@ -50,6 +50,27 @@ export function availableNames(runTiles: RunTile[]): string[] {
   return runTiles.filter((t) => t.available).map((t) => t.name)
 }
 
+export type JobOutcomeVariant = 'neutral' | 'info' | 'warning' | 'success' | 'danger'
+
+const STATUS_VARIANT: Record<Job['status'], JobOutcomeVariant> = {
+  queued: 'neutral', running: 'warning', success: 'success', failed: 'danger', cancelled: 'neutral',
+}
+const STATUS_LABEL: Record<Job['status'], string> = {
+  queued: 'в очереди', running: 'выполняется', success: 'готово', failed: 'ошибка', cancelled: 'отменена',
+}
+
+/**
+ * Исход задачи для подписи. Задача, где часть тайлов упала, всё равно доходит
+ * до статуса success — подписывать её «готово» рядом со счётчиком «6 с ошибкой»
+ * значит вводить в заблуждение.
+ */
+export function jobOutcome(job: Job): { label: string; variant: JobOutcomeVariant } {
+  if (job.status === 'success' && job.tiles_failed > 0) {
+    return { label: 'завершено с ошибками', variant: 'warning' }
+  }
+  return { label: STATUS_LABEL[job.status], variant: STATUS_VARIANT[job.status] }
+}
+
 /**
  * Группировка «тайл → причина» по причине: список из полутора десятков строк
  * «сбой: PDAL пустой файл» по одной на тайл нечитаем, а сгруппированный —

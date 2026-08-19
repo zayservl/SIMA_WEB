@@ -6,18 +6,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { artifactsFor, tileDir } from '@/lib/outputs'
+import { jobOutcome } from '@/lib/jobs'
 import type { Job, JobType, Tile, TileStatus, StepStatus } from '@/api/types'
 import {
   CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Circle,
   Search, SkipForward, Square, SlidersHorizontal, Ban, AlertTriangle, Pencil, Check, X,
 } from 'lucide-react'
 
-const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
-  queued: 'neutral', running: 'warning', success: 'success', failed: 'danger', cancelled: 'neutral',
-}
-const statusLabel: Record<Job['status'], string> = {
-  queued: 'в очереди', running: 'выполняется', success: 'готово', failed: 'ошибка', cancelled: 'отменена',
-}
 const typeLabel: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }
 
 const failReasons = [
@@ -49,7 +44,9 @@ function advanceJob(cur: Job): Partial<Job> | null {
     if (stepIdx === -1) return null
     const step = t.steps[stepIdx]
 
-    if (Math.random() < 0.12) {
+    // Доля сбоев подобрана так, чтобы на прогоне было видно и разбор ошибок,
+    // и осмысленный результат: при 0.12 на шаг падало большинство тайлов.
+    if (Math.random() < 0.03) {
       step.status = 'failed'
       step.finished_at = now()
       step.duration_ms = durMs(step.started_at, step.finished_at)
@@ -227,7 +224,7 @@ function JobName({ job }: { job: Job }) {
         <button
           onClick={() => { setDraft(job.name); setEditing(true) }}
           title="Переименовать расчёт"
-          className="text-slate-300 opacity-0 transition-opacity hover:text-slate-500 group-hover:opacity-100"
+          className="text-slate-400 transition-colors hover:text-slate-600"
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
@@ -273,6 +270,7 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
   const stopTile = useProjectStore((s) => s.stopTile)
   const cancelJob = useProjectStore((s) => s.cancelJob)
   const cancellable = job.status === 'queued' || job.status === 'running'
+  const outcome = jobOutcome(job)
 
   const icon = job.status === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
     : job.status === 'success' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -296,20 +294,20 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
   return (
     <Card>
       <CardPad>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {icon}
-            <div>
-              <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5">{icon}</div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <JobName job={job} />
                 <Badge variant="neutral">{typeLabel[job.type]}</Badge>
-                <Badge variant={statusVariant[job.status]}>{statusLabel[job.status]}</Badge>
+                <Badge variant={outcome.variant}>{outcome.label}</Badge>
               </div>
               <div className="text-xs text-slate-500">
                 {job.started_at && `старт: ${new Date(job.started_at).toLocaleTimeString('ru-RU')}`}
                 {job.finished_at && ` · финиш: ${new Date(job.finished_at).toLocaleTimeString('ru-RU')}`}
               </div>
-              <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
                 <span className={deterministic ? 'text-emerald-600' : 'text-slate-400'}>
                   {deterministic ? 'детерминизм' : 'недетерминировано'}
                 </span>
@@ -323,13 +321,16 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
               )}
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="text-right text-xs">
-              <div className="text-slate-500">{job.tiles_done}/{job.tiles_total} · {job.progress}%</div>
+              <div className="text-slate-500">
+                готово {job.tiles_done} из {job.tiles_total}
+                {job.status === 'running' && ` · ${job.progress}%`}
+              </div>
               {job.tiles_failed > 0 && <div className="text-amber-600">{job.tiles_failed} с ошибкой</div>}
               {job.tiles_skipped > 0 && <div className="text-slate-400">{job.tiles_skipped} пропущено</div>}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {cancellable && (
                 <Button variant="outline" size="sm" onClick={() => setConfirmCancel(true)} title="Отменить расчёт: посчитанные результаты сессии будут удалены">
                   <Ban className="h-3 w-3" /> Отменить расчёт
@@ -375,7 +376,10 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
 
         {/* Прогресс-бар */}
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full bg-brand-500 transition-all" style={{ width: `${job.progress}%` }} />
+          <div
+            className={cn('h-full transition-all', job.tiles_failed > 0 ? 'bg-amber-400' : 'bg-brand-500')}
+            style={{ width: `${job.progress}%` }}
+          />
         </div>
 
         {/* Сводка по статусам тайлов */}

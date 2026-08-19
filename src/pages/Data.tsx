@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
 import { withPlural, TILES, FILES } from '@/lib/plural'
+import { jobOutcome } from '@/lib/jobs'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -126,12 +127,6 @@ function renderParamsValue(value: ParamValue, depth = 0): React.ReactNode {
 }
 
 const typeLabel: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }
-const statusLabel: Record<Job['status'], string> = {
-  queued: 'в очереди', running: 'выполняется', success: 'готово', failed: 'ошибка', cancelled: 'отменена',
-}
-const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
-  queued: 'neutral', running: 'warning', success: 'success', failed: 'danger', cancelled: 'neutral',
-}
 const kindColor: Record<string, string> = {
   raster: 'text-sky-600',
   vector: 'text-emerald-600',
@@ -198,7 +193,7 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold">{job.name}</span>
                 <Badge variant="neutral">{typeLabel[job.type]}</Badge>
-                <Badge variant={statusVariant[job.status]}>{statusLabel[job.status]}</Badge>
+                <Badge variant={jobOutcome(job).variant}>{jobOutcome(job).label}</Badge>
                 {job.session_id && <span className="font-mono text-[10px] text-slate-400">сессия {job.session_id}</span>}
                 <span className={cn('text-[10px]', deterministic ? 'text-emerald-600' : 'text-slate-400')}>
                   {deterministic ? 'детерминизм' : 'недетерминировано'}{seed != null ? ` · seed ${seed}` : ''}
