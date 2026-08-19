@@ -2,48 +2,78 @@ import { NavLink, useParams } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { LayoutDashboard, Upload, Mountain, TreePine, Droplets, ListChecks, Database, Settings, SlidersHorizontal } from 'lucide-react'
-import type { JobType, JobStatus } from '@/api/types'
+import type { JobType } from '@/api/types'
+import { checkDependencies } from '@/lib/dependencies'
 
-// Статус этапа конвейера для индикатора в сайдбаре.
-type StageState = 'idle' | 'running' | 'success' | 'failed'
+// Состояние этапа конвейера для индикатора в меню. Порядок работы должен
+// читаться из меню, а не выясняться методом проб: помимо «идёт/готово» нужно
+// видеть, что модуль ждёт чужого результата.
+type StageState = 'idle' | 'blocked' | 'running' | 'partial' | 'success' | 'failed'
+
+interface Stage {
+  state: StageState
+  title: string
+}
 
 const stageDot: Record<StageState, string> = {
   idle: 'bg-slate-300',
+  blocked: 'bg-slate-300 ring-1 ring-amber-300',
   running: 'bg-amber-400 animate-pulse',
+  partial: 'bg-amber-400',
   success: 'bg-emerald-500',
   failed: 'bg-red-500',
 }
 
-const stageTitle: Record<StageState, string> = {
-  idle: 'не запускался',
-  running: 'в обработке',
-  success: 'готово',
-  failed: 'ошибка',
+const IDLE: Stage = { state: 'idle', title: 'не запускался' }
+
+function moduleStage(projectId: string, type: JobType, jobs: ReturnType<typeof useProjectStore.getState>['jobs']): Stage {
+  const typed = jobs.filter((j) => j.project_id === projectId && j.type === type)
+  const latest = typed.length
+    ? typed.reduce((a, b) => (a.started_at && b.started_at && a.started_at > b.started_at ? a : b))
+    : undefined
+
+  if (latest?.status === 'running' || latest?.status === 'queued') {
+    return { state: 'running', title: 'идёт расчёт' }
+  }
+  if (latest?.status === 'success') {
+    return latest.tiles_failed > 0
+      ? { state: 'partial', title: `готово ${latest.tiles_done} из ${latest.tiles_total} тайлов` }
+      : { state: 'success', title: 'рассчитан' }
+  }
+  if (latest?.status === 'failed') return { state: 'failed', title: 'расчёт завершился ошибкой' }
+
+  // Ни одной сессии: показываем, чего модуль ждёт, чтобы стать доступным.
+  const deps = checkDependencies(projectId, type)
+  if (!deps.ok) {
+    return { state: 'blocked', title: 'ждёт: ' + deps.missing.map((m) => `${m.layer} (${m.tab})`).join(', ') }
+  }
+  return IDLE
 }
 
-function useStageStates(projectId?: string): Record<Exclude<JobType, never>, StageState> {
+function useStages(projectId?: string): { upload: Stage } & Record<JobType, Stage> {
+  // Подписка на обе ветки стора: индикаторы зависят и от задач, и от загрузки.
   const jobs = useProjectStore((s) => s.jobs)
-  if (!projectId) return { relief: 'idle', forest: 'idle', water: 'idle' } as Record<JobType, StageState>
-  const out: Record<JobType, StageState> = { relief: 'idle', forest: 'idle', water: 'idle' }
-  ;(['relief', 'forest', 'water'] as JobType[]).forEach((type) => {
-    const typed = jobs.filter((j) => j.project_id === projectId && j.type === type)
-    if (typed.length === 0) { out[type] = 'idle'; return }
-    // последний по времени старт
-    const latest = typed.reduce((a, b) => (a.started_at && b.started_at && a.started_at > b.started_at ? a : b))
-    const map: Record<JobStatus, StageState> = {
-      queued: 'idle', running: 'running', success: 'success', failed: 'failed', cancelled: 'idle',
-    }
-    out[type] = map[latest.status]
-  })
-  return out
+  const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+
+  if (!projectId) {
+    return { upload: IDLE, relief: IDLE, forest: IDLE, water: IDLE }
+  }
+  return {
+    upload: inputTiles?.length
+      ? { state: 'success', title: `материалы оценены: ${inputTiles.length} тайлов` }
+      : { state: 'blocked', title: 'материалы не загружены' },
+    relief: moduleStage(projectId, 'relief', jobs),
+    forest: moduleStage(projectId, 'forest', jobs),
+    water: moduleStage(projectId, 'water', jobs),
+  }
 }
 
 export function Sidebar() {
   const { projectId } = useParams()
-  const stages = useStageStates(projectId)
+  const stages = useStages(projectId)
 
   const projectNav = [
-    { to: 'upload', icon: Upload, label: 'Загрузка данных', stage: undefined as StageState | undefined },
+    { to: 'upload', icon: Upload, label: 'Загрузка данных', stage: stages.upload as Stage | undefined },
     { to: 'relief', icon: Mountain, label: 'Рельеф', stage: stages.relief },
     { to: 'forest', icon: TreePine, label: 'Древостой', stage: stages.forest },
     { to: 'water', icon: Droplets, label: 'Вода', stage: stages.water },
@@ -102,10 +132,10 @@ export function Sidebar() {
                   >
                     <Icon className="h-4 w-4 shrink-0" />
                     <span className="flex-1">{item.label}</span>
-                    {item.stage && item.stage !== 'idle' && (
+                    {item.stage && item.stage.state !== 'idle' && (
                       <span
-                        title={stageTitle[item.stage]}
-                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', stageDot[item.stage])}
+                        title={item.stage.title}
+                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', stageDot[item.stage.state])}
                       />
                     )}
                   </NavLink>

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
 import { withPlural, TILES, FILES } from '@/lib/plural'
-import { jobOutcome } from '@/lib/jobs'
+import { jobOutcome, projectRoute } from '@/lib/jobs'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -135,16 +136,19 @@ const kindColor: Record<string, string> = {
 export default function Data() {
   const { projectId } = useParams()
   const jobs = useProjectStore((s) => (projectId ? s.jobs.filter((j) => j.project_id === projectId) : s.jobs))
+  const allJobs = useProjectStore((s) => s.jobs)
+  const hasTiles = useProjectStore((s) => !!(projectId && s.inputTiles[projectId]?.length))
   const [toast, setToast] = useState<string | null>(null)
 
   const fireArchive = (what: string) => setToast(`Готовится архив: ${what} (демо-заглушка)`)
 
   if (jobs.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center text-slate-400">
-        <Database className="mb-3 h-12 w-12" />
-        <p className="text-sm">Нет данных. Запустите обработку — выходные файлы появятся здесь.</p>
-      </div>
+      <EmptyState
+        icon={Database}
+        title="Выходных файлов пока нет"
+        steps={projectRoute(projectId ?? '', allJobs, hasTiles)}
+      />
     )
   }
 

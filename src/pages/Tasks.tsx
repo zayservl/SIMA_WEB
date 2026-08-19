@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { artifactsFor, tileDir } from '@/lib/outputs'
-import { jobOutcome } from '@/lib/jobs'
+import { jobOutcome, projectRoute } from '@/lib/jobs'
+import { EmptyState } from '@/components/ui/EmptyState'
 import type { Job, JobType, Tile, TileStatus, StepStatus } from '@/api/types'
 import {
   CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Circle,
@@ -141,14 +142,17 @@ export default function Tasks() {
   const navigate = useNavigate()
   const jobs = useProjectStore((s) => (projectId ? s.jobs.filter((j) => j.project_id === projectId) : s.jobs))
   const updateJob = useProjectStore((s) => s.updateJob)
+  const allJobs = useProjectStore((s) => s.jobs)
+  const hasTiles = useProjectStore((s) => !!(projectId && s.inputTiles[projectId]?.length))
   useJobSimulation(updateJob)
 
   if (jobs.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center text-slate-400">
-        <Clock className="mb-3 h-12 w-12" />
-        <p className="text-sm">Нет задач. Запустите обработку из раздела «Рельеф», «Древостой» или «Вода».</p>
-      </div>
+      <EmptyState
+        icon={Clock}
+        title="Расчётов пока нет"
+        steps={projectRoute(projectId ?? '', allJobs, hasTiles)}
+      />
     )
   }
 

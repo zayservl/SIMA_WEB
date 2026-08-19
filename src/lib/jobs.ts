@@ -165,3 +165,20 @@ export function forestRunTiles(
     return { ...t, available: false, reason: reasonByName.get(t.name) ?? 'тайла нет в сессии «Рельефа»' }
   })
 }
+
+/** Шаги маршрута проекта для пустых экранов: что уже сделано и куда идти дальше. */
+export function projectRoute(projectId: string, jobs: Job[], hasTiles: boolean) {
+  const done = (type: JobType) =>
+    jobs.some((j) => j.project_id === projectId && j.type === type && j.tiles.some((t) => t.status === 'done'))
+  const base = `/projects/${projectId}`
+  return [
+    { label: 'Загрузить данные', to: `${base}/upload`, done: hasTiles,
+      hint: 'Каталоги АФС и ВЛС, оценка материалов по тайлам' },
+    { label: 'Рассчитать рельеф', to: `${base}/relief`, done: done('relief'),
+      hint: 'ЦМР и ЦММ — вход «Древостоя»' },
+    { label: 'Рассчитать древостой', to: `${base}/forest`, done: done('forest'),
+      hint: 'ЦМД, кроны, категории рубки' },
+    { label: 'Рассчитать воду', to: `${base}/water`, done: done('water'),
+      hint: 'Маска воды по ортофотоплану; от «Рельефа» не зависит' },
+  ]
+}
