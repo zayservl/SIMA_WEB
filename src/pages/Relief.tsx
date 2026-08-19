@@ -5,7 +5,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { Card, CardPad } from '@/components/ui/card'
 import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Checkbox, Radio, NumberInput, Field, InfoHint, Select } from '@/components/ui/controls'
+import { Checkbox, Radio, NumberInput, Field, InfoHint, Select, Input } from '@/components/ui/controls'
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { RunSetup } from '@/components/ui/RunSetup'
@@ -17,7 +17,6 @@ import { checkDependencies } from '@/lib/dependencies'
 
 const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
   smrf: 'SMRF',
-  las_class: 'Из классификации LAS',
   manual: 'Ручная',
   stat: 'Статистическая',
   range: 'Перцентильная',
@@ -89,6 +88,19 @@ export default function Relief() {
   // По умолчанию на расчёт идут все доступные тайлы.
   const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
+
+  // Сечения вводятся строкой: набор шагов, а не фиксированное число полей.
+  // В параметры уходят только положительные числа, разбор — по потере фокуса.
+  const [horizontalsText, setHorizontalsText] = useState(() => p.vectors.horizontals.join(', '))
+  const [horizontalsInvalid, setHorizontalsInvalid] = useState(false)
+  const commitHorizontals = () => {
+    const parts = horizontalsText.split(/[,;\s]+/).filter(Boolean)
+    const values = parts.map((t) => parseFloat(t.replace(',', '.'))).filter((v) => isFinite(v) && v > 0)
+    const unique = [...new Set(values)].sort((a, b) => a - b)
+    setHorizontalsInvalid(unique.length !== parts.length)
+    setP((s) => ({ ...s, vectors: { ...s.vectors, horizontals: unique } }))
+    setHorizontalsText(unique.join(', '))
+  }
 
   // Маппинг предустановок сглаживания → sigma/expert-параметры. В режиме
   // «Пользовательское» sigma не подменяется — её задаёт пользователь.
@@ -183,10 +195,6 @@ export default function Relief() {
                   <InfoHint text={METHOD_TOOLTIPS.smrf} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <Radio checked={p.filter_method === 'las_class'} onChange={() => set('filter_method', 'las_class')} label="Из классификации LAS" />
-                  <InfoHint text={METHOD_TOOLTIPS.las_class} />
-                </span>
-                <span className="inline-flex items-center gap-1.5">
                   <Radio checked={p.filter_method === 'manual'} onChange={() => set('filter_method', 'manual')} label="Ручная" />
                   <InfoHint text={METHOD_TOOLTIPS.manual} />
                 </span>
@@ -221,17 +229,19 @@ export default function Relief() {
               )}
               {p.filter_method === 'kmeans' && (
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="mean_k"><NumberInput value={p.filter.mean_k || 8} onChange={(v) => set('filter', { ...p.filter, mean_k: v })} /></Field>
-                  <Field label="multiplier"><NumberInput value={p.filter.mult || 2} step={0.1} onChange={(v) => set('filter', { ...p.filter, mult: v })} /></Field>
+                  <Field label="Соседей в выборке" tooltip="mean_k — сколько ближайших точек берётся для оценки среднего расстояния.">
+                    <NumberInput value={p.filter.mean_k || 8} onChange={(v) => set('filter', { ...p.filter, mean_k: v })} />
+                  </Field>
+                  <Field label="Множитель СКО" tooltip="multiplier — во сколько стандартных отклонений укладывается «нормальная» точка.">
+                    <NumberInput value={p.filter.mult || 2} step={0.1} onChange={(v) => set('filter', { ...p.filter, mult: v })} />
+                  </Field>
                 </div>
               )}
 
-              {p.filter_method === 'las_class' && (
-                <p className="hint-base">
-                  Земля берётся из классификации входного LAS (класс 2 по ASPRS). Собственная
-                  классификация не выполняется. Если в файле класса 2 нет, тайл отработает по SMRF.
-                </p>
-              )}
+              <p className="hint-base">
+                Готовая классификация входного LAS (класс 2 по ASPRS) используется автоматически,
+                когда она есть в файле, — отдельного метода для неё нет.
+              </p>
 
               {p.filter_method === 'smrf' && (
                 <div className="border-t border-slate-100 pt-3">
@@ -256,8 +266,18 @@ export default function Relief() {
                   <div className="mt-3 flex flex-wrap gap-4">
                     <Checkbox checked={p.smrf.elm} onChange={(v) => set('smrf', { ...p.smrf, elm: v })} label="Отсев низких выбросов (ELM)" />
                     <Checkbox checked={p.smrf.outlier} onChange={(v) => set('smrf', { ...p.smrf, outlier: v })} label="Отсев статистических выбросов" />
-                    <Checkbox checked={p.smrf.cut_smrf} onChange={(v) => set('smrf', { ...p.smrf, cut_smrf: v })} label="Доп. отсечение" />
+                    <span className="inline-flex items-center gap-2">
+                      <Checkbox checked={p.smrf.cut_smrf} onChange={(v) => set('smrf', { ...p.smrf, cut_smrf: v })} label="Доп. отсечение" />
+                      <InfoHint text="cut_smrf — отбросить точки, отстоящие от найденной поверхности земли дальше порога." />
+                    </span>
                   </div>
+                  {p.smrf.cut_smrf && (
+                    <div className="mt-3 sm:max-w-xs">
+                      <Field label="Порог отсечения, м" tooltip="cut_threshold — на сколько точка может отстоять от поверхности земли, оставаясь землёй.">
+                        <NumberInput value={p.smrf.cut_threshold} step={0.5} min={0} onChange={(v) => set('smrf', { ...p.smrf, cut_threshold: v })} />
+                      </Field>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -484,7 +504,36 @@ export default function Relief() {
                 </div>
               </div>
               <div className="border-t border-slate-100 pt-3">
+                <Field
+                  label="Сечение горизонталей, м"
+                  tooltip="Шаги сечения, для каждого строится свой слой горизонталей (backend: vectors.horizontals). Значения через запятую; порядок и повторы не важны."
+                  className="sm:max-w-md"
+                >
+                  <Input
+                    value={horizontalsText}
+                    onChange={(e) => setHorizontalsText(e.target.value)}
+                    onBlur={commitHorizontals}
+                    placeholder="0.5, 2, 5, 10"
+                  />
+                </Field>
+                {horizontalsInvalid && (
+                  <p className="mt-1 text-xs text-amber-600">
+                    Оставлены только положительные числа: {p.vectors.horizontals.join(', ') || 'ни одного'}
+                  </p>
+                )}
+              </div>
+              <div className="border-t border-slate-100 pt-3">
                 <Checkbox checked={p.vectors.tin} onChange={(v) => set('vectors', { ...p.vectors, tin: v })} label="TIN (DXF)" />
+              </div>
+              <div className="border-t border-slate-100 pt-3">
+                <span className="inline-flex items-center gap-1.5">
+                  <Checkbox
+                    checked={p.save_measured_mask}
+                    onChange={(v) => set('save_measured_mask', v)}
+                    label="Сохранять маску измеренных ячеек"
+                  />
+                  <InfoHint text="Дополнительный растр: где отметка ЦМР получена из точек съёмки, а где достроена интерполяцией. Нужен, чтобы отличать точность построения от точности заполнения пустот." />
+                </span>
               </div>
             </div>
           </Accordion>

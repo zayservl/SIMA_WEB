@@ -151,9 +151,10 @@ export interface Job {
 
 // ---- Параметры: Рельеф (#8,9,10,14) --------------------------------------
 
-// 'las_class' — земля берётся из готовой классификации LAS (ASPRS class 2),
-// собственная классификация не выполняется (backend: CheckClassification.is_ground).
-export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf' | 'las_class'
+// Набор 1:1 к sima_relief_service.steps.step_filter. Готовая классификация LAS
+// отдельным методом не выбирается: сервис определяет её сам
+// (GroundProcessing.get_raster → CheckClassification.is_ground).
+export type FilterMethod = 'manual' | 'stat' | 'range' | 'kmeans' | 'smrf'
 
 // Метод заполнения пустот растра (backend: sima_dem_core.raster.holes.fill_voids).
 // 'laplace' — решение уравнения Лапласа, поверхность гладкая по построению;
@@ -176,6 +177,8 @@ export interface ReliefParams {
     threshold: number
     scalar: number
     cut_smrf: boolean
+    /** Порог отсечения в cut-режиме, м (backend: SMRFConfig.cut_threshold). Действует при cut_smrf. */
+    cut_threshold: number
     elm: boolean
     outlier: boolean
   }
@@ -249,6 +252,12 @@ export interface ReliefParams {
     horizontals: number[]
     tin: boolean
   }
+  /**
+   * Сохранять маску измеренных ячеек ЦМР (backend: ReliefService.save_measured_mask).
+   * Даёт слой dtm_measured — где отметка получена из точек, а где достроена
+   * интерполяцией. Разводит точность построения и точность заполнения пустот.
+   */
+  save_measured_mask: boolean
   target_crs: string
   deterministic: boolean
   seed: number

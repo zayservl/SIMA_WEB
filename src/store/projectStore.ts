@@ -10,7 +10,7 @@ import type { InputTile } from '@/lib/inputTiles'
 export const defaultReliefParams: ReliefParams = {
   filter_method: 'smrf',
   filter: { spm_min: 0, spm_max: 100, spp_min: 1, spp_max: 99, mean_k: 8, mult: 2 },
-  smrf: { slope: 0.2, window: 16, threshold: 0.45, scalar: 1.2, cut_smrf: false, elm: true, outlier: true },
+  smrf: { slope: 0.2, window: 16, threshold: 0.45, scalar: 1.2, cut_smrf: false, cut_threshold: 3, elm: true, outlier: true },
   smoothing: { enabled: true, sigma: 1.0, order: 0, window: 3 },
   smoothing_preset: 'medium',
   output_resolution_preset: 'native',
@@ -33,6 +33,7 @@ export const defaultReliefParams: ReliefParams = {
   },
   heights: { enabled: false, source: 'las', min_distance_m: 10 },
   vectors: { horizontals: [0.5, 2, 5, 10], tin: false },
+  save_measured_mask: false,
   target_crs: '',
   deterministic: true, seed: 42,
 }

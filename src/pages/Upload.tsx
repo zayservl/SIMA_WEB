@@ -454,9 +454,8 @@ export default function Upload() {
               <div className="mt-3 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
                 <div>
-                  Классификация есть в {classifiedCount} из {vlsCount} файлов ВЛС. Чтобы взять землю
-                  из неё вместо собственной классификации, выберите в «Рельефе» метод «Из
-                  классификации LAS».
+                  Классификация есть в {classifiedCount} из {vlsCount} файлов ВЛС. Там, где она есть,
+                  земля берётся из неё; для остальных тайлов «Рельеф» классифицирует облако сам.
                 </div>
               </div>
             )}
