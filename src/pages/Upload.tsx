@@ -3,13 +3,14 @@ import { useParams } from 'react-router-dom'
 import { useProjectStore } from '@/store/projectStore'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input, Field, InfoHint } from '@/components/ui/controls'
+import { Input, Field, InfoHint, NumberInput } from '@/components/ui/controls'
 import { Badge } from '@/components/ui/badge'
 import { FolderOpen, AlertTriangle, CheckCircle2, Layers, Grid3x3 } from 'lucide-react'
 import type { MaterialAssessment } from '@/api/types'
 import {
   generateMockInputTiles, CLASS_LABELS, TARGET_CRS,
-  inputMode, type InputTile, type InputMode,
+  inputMode, originOffsetM, formatOrigin, DEFAULT_ORIGIN_TOLERANCE_M,
+  type InputTile, type InputMode,
 } from '@/lib/inputTiles'
 
 // Требования к именам входящих файлов и правило спаривания. Единый текст для
@@ -121,6 +122,7 @@ export default function Upload() {
   const [detectedCrs, setDetectedCrs] = useState<string | null>(
     () => storedTiles?.find((t) => t.afs)?.afs?.crs ?? storedTiles?.find((t) => t.vls)?.vls?.crs ?? null,
   )
+  const [originTolM, setOriginTolM] = useState(DEFAULT_ORIGIN_TOLERANCE_M)
   const [mode, setMode] = useState<InputMode>(() => (storedTiles?.length ? inputMode(storedTiles) : 'pair'))
 
   // Целевая СК = СК АФС (при режиме «только ВЛС» — СК ВЛС): её считывает
@@ -155,6 +157,11 @@ export default function Upload() {
   const hasIncomplete = statuses.includes('incomplete')
   // Тайлы, у которых СК ВЛС отличается от целевой — их приводим и называем поимённо.
   const reprojectTiles = tiles.filter((t, i) => statuses[i] === 'reproject')
+  // Пары с совпадающей СК, но разъехавшейся геопривязкой: сверяем нижний левый
+  // угол тайла. Расчёт не блокируется — решение за пользователем.
+  const shiftedTiles = tiles
+    .map((t) => ({ tile: t, offset: originOffsetM(t) }))
+    .filter((r): r is { tile: InputTile; offset: number } => r.offset !== null && r.offset > originTolM)
   const canProceed = !hasIncomplete
 
   // Сводка метаданных исходных материалов по обоим типам съёмки.
@@ -303,6 +310,14 @@ export default function Upload() {
                 СК не определена — проверьте файлы
               </div>
             )}
+            <div className="mb-3 sm:max-w-xs">
+              <Field
+                label="Допуск на расхождение углов, м"
+                tooltip="У пар с совпадающей СК сверяются координаты нижнего левого угла тайлов АФС и ВЛС. Расхождение больше допуска — предупреждение: тайл остаётся доступен для расчёта, решение за пользователем."
+              >
+                <NumberInput value={originTolM} step={0.1} min={0} onChange={setOriginTolM} />
+              </Field>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -311,6 +326,7 @@ export default function Upload() {
                     <th className="py-2 pr-4">АФС (ТИФ)</th>
                     <th className="py-2 pr-4">ВЛС (ЛАС)</th>
                     <th className="py-2 pr-4">Площадь</th>
+                    <th className="py-2 pr-4">Нижний левый угол</th>
                     <th className="py-2 pr-4">Валидация пары</th>
                   </tr>
                 </thead>
@@ -344,6 +360,19 @@ export default function Upload() {
                           ) : <span className="text-xs text-slate-400">—</span>}
                         </td>
                         <td className="py-2.5 pr-4 font-mono text-xs text-slate-600">{t.area_km2} км²</td>
+                        <td className="py-2.5 pr-4 text-xs">
+                          {t.afs && <div className="font-mono text-slate-600">АФС {formatOrigin(t.afs.origin)}</div>}
+                          {t.vls && <div className="font-mono text-slate-600">ВЛС {formatOrigin(t.vls.origin)}</div>}
+                          {(() => {
+                            const off = originOffsetM(t)
+                            if (off === null) {
+                              return <div className="text-slate-400">СК разнятся — сверка после приведения</div>
+                            }
+                            return off > originTolM
+                              ? <div className="text-amber-600">расхождение {off} м</div>
+                              : <div className="text-emerald-600">совпадают</div>
+                          })()}
+                        </td>
                         <td className="py-2.5 pr-4">
                           <div className="flex items-center gap-1.5">
                             {st === 'ok' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
@@ -360,8 +389,19 @@ export default function Upload() {
             </div>
 
             {/* Предупреждения валидации */}
-            {(reprojectTiles.length > 0 || hasIncomplete) && (
+            {(reprojectTiles.length > 0 || shiftedTiles.length > 0 || hasIncomplete) && (
               <div className="mt-3 space-y-2">
+                {shiftedTiles.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      СК совпадают, но нижние левые углы тайлов АФС и ВЛС разъехались больше
+                      допуска ({originTolM} м):{' '}
+                      {shiftedTiles.map((r) => `${r.tile.name} — ${r.offset} м`).join(', ')}.
+                      Обычно это признак разной нарезки съёмок. Тайлы остаются доступны для расчёта.
+                    </div>
+                  </div>
+                )}
                 {reprojectTiles.length > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -416,7 +456,7 @@ export default function Upload() {
               </div>
             )}
 
-            {canProceed && tiles.length > 0 && mode === 'pair' && (
+            {canProceed && tiles.length > 0 && mode === 'pair' && reprojectTiles.length === 0 && shiftedTiles.length === 0 && (
               <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 Все пары валидны. Можно запускать обработку в разделе «Рельеф», «Древостой» или «Вода».

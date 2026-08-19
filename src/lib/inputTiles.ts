@@ -93,6 +93,9 @@ export function generateMockInputTiles(mode: InputMode): InputTile[] {
       // СК не совпадает внутри пары → будет приведена к СК АФС
       afsCrs = 'EPSG:4326'
       afs = { ...afs!, crs: afsCrs, origin: [37.61, 55.75] }
+    } else if (i === 17 || i === 18) {
+      // Геопривязка ВЛС смещена относительно АФС при совпадающей СК
+      vls = { ...vls!, origin: [origin[0] + 2.5, origin[1] - 1.75] }
     } else if (i === 23) {
       // Неполная пара: нет ВЛС
       vls = null
@@ -110,4 +113,25 @@ export function inputMode(tiles: InputTile[]): InputMode {
   if (hasAfs && !hasVls) return 'afs-only'
   if (!hasAfs && hasVls) return 'vls-only'
   return 'pair'
+}
+
+/**
+ * Расхождение геопривязки внутри пары: расстояние между нижними левыми углами
+ * тайлов АФС и ВЛС, м. Считается только при совпадающих СК — при разных СК
+ * координаты несопоставимы, и пара сначала приводится к целевой СК.
+ * null — сверять нечего.
+ */
+export function originOffsetM(t: InputTile): number | null {
+  if (!t.afs || !t.vls || t.afs.crs !== t.vls.crs) return null
+  const dx = t.afs.origin[0] - t.vls.origin[0]
+  const dy = t.afs.origin[1] - t.vls.origin[1]
+  return +Math.hypot(dx, dy).toFixed(2)
+}
+
+/** Допуск на расхождение углов по умолчанию, м. */
+export const DEFAULT_ORIGIN_TOLERANCE_M = 1
+
+/** Координаты угла для вывода в интерфейсе. */
+export function formatOrigin(origin: [number, number]): string {
+  return `${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}`
 }
