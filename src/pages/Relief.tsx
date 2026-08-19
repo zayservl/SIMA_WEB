@@ -164,6 +164,14 @@ export default function Relief() {
         onCustomResolutionChange={(v) => set('output_resolution_m', v)}
       />
 
+      <RunSetup
+        name={jobName}
+        onNameChange={setJobName}
+        tiles={runTiles}
+        selected={selectedTiles}
+        onSelectedChange={setSelectedTiles}
+      />
+
       {/* Классификация рельефа */}
       <Card>
         <CardPad>

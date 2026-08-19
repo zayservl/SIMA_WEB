@@ -50,6 +50,22 @@ export function availableNames(runTiles: RunTile[]): string[] {
   return runTiles.filter((t) => t.available).map((t) => t.name)
 }
 
+/**
+ * Группировка «тайл → причина» по причине: список из полутора десятков строк
+ * «сбой: PDAL пустой файл» по одной на тайл нечитаем, а сгруппированный —
+ * сразу показывает, что именно пошло не так и на скольких тайлах.
+ */
+export function groupByReason(items: { name: string; reason?: string }[]): [string, string[]][] {
+  const acc = new Map<string, string[]>()
+  for (const it of items) {
+    const key = it.reason ?? 'данных недостаточно'
+    const names = acc.get(key)
+    if (names) names.push(it.name)
+    else acc.set(key, [it.name])
+  }
+  return [...acc.entries()]
+}
+
 // ---- Полнота сессии «Рельефа» как входа «Древостоя» ----------------------
 
 const TILE_STATUS_REASON: Record<Exclude<TileStatus, 'done'>, string> = {

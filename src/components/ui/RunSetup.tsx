@@ -6,7 +6,7 @@ import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Field, Input } from '@/components/ui/controls'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Grid3x3 } from 'lucide-react'
-import { availableNames, type RunTile } from '@/lib/jobs'
+import { availableNames, groupByReason, type RunTile } from '@/lib/jobs'
 
 export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange }: {
   name: string
@@ -24,12 +24,7 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
       selected.includes(tileName) ? selected.filter((n) => n !== tileName) : [...selected, tileName],
     )
 
-  // Причины недоступности группируются: список из 20 строк «нет ВЛС» нечитаем.
-  const byReason = unavailable.reduce<Record<string, string[]>>((acc, t) => {
-    const key = t.reason ?? 'данных недостаточно'
-    ;(acc[key] ??= []).push(t.name)
-    return acc
-  }, {})
+  const byReason = groupByReason(unavailable)
 
   return (
     <Card>
@@ -101,9 +96,11 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
                   <div>
                     Данных недостаточно для {unavailable.length} тайлов — они недоступны к расчёту:
                   </div>
-                  {Object.entries(byReason).map(([reason, names]) => (
+                  {byReason.map(([reason, names]) => (
                     <div key={reason}>
-                      <span className="font-medium">{reason}</span> — {names.join(', ')}
+                      <span className="font-medium">{reason}</span> —{' '}
+                      {/* Причина, накрывшая весь каталог, поимённого списка не проясняет. */}
+                      {names.length === tiles.length ? 'все тайлы проекта' : names.join(', ')}
                     </div>
                   ))}
                 </div>

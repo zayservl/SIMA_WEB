@@ -73,14 +73,6 @@ export default function Water() {
         </div>
       )}
 
-      <RunSetup
-        name={jobName}
-        onNameChange={setJobName}
-        tiles={runTiles}
-        selected={selectedTiles}
-        onSelectedChange={setSelectedTiles}
-      />
-
       {/* Шапка модуля: СК + единственный источник — АФС */}
       <ModuleHeader projectId={projectId ?? ''}>
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-500">
@@ -89,6 +81,14 @@ export default function Water() {
           производные рельефа на этом этапе не используются.
         </div>
       </ModuleHeader>
+
+      <RunSetup
+        name={jobName}
+        onNameChange={setJobName}
+        tiles={runTiles}
+        selected={selectedTiles}
+        onSelectedChange={setSelectedTiles}
+      />
 
       {/* Сегментация вод */}
       <Card>

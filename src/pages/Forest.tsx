@@ -203,14 +203,6 @@ export default function Forest() {
         </div>
       )}
 
-      <RunSetup
-        name={jobName}
-        onNameChange={setJobName}
-        tiles={runTiles}
-        selected={effectiveSelected}
-        onSelectedChange={setSelectedTiles}
-      />
-
       {/* Шапка модуля: СК, сглаживание, разрешение + переключатели источника */}
       <ModuleHeader
         projectId={projectId ?? ''}
@@ -247,32 +239,37 @@ export default function Forest() {
             <p className="hint-base mt-1.5">Производные рельефа подставляются из выбранной сессии автоматически</p>
           )}
 
-          {/* Неполнота выбранной сессии: по каким тайлам чего не хватает */}
+          {/* Неполнота выбранной сессии. Поимённый разбор — ниже, в блоке
+              «Запуск расчёта»: там он шире и стоит рядом со списком тайлов. */}
           {completeness.incompleteTiles.length > 0 && (
             <div className="mt-2 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="space-y-1">
                 <div className="font-medium">
-                  В выбранной сессии «Рельефа» посчитаны не все данные — {completeness.incompleteTiles.length} тайлов
-                  недоступны «Древостою»:
+                  В сессии посчитаны не все данные: «Древостою» доступно{' '}
+                  {completeness.readyTiles.length} из{' '}
+                  {completeness.readyTiles.length + completeness.incompleteTiles.length} тайлов.
                 </div>
-                <ul className="space-y-0.5">
-                  {completeness.incompleteTiles.map((t) => (
-                    <li key={t.name}>
-                      <span className="font-mono">{t.name}</span> — {t.reason}
-                    </li>
-                  ))}
-                </ul>
                 {completeness.missingLayers.length > 0 && (
                   <div>
-                    Пересчитайте «Рельеф» с построением: {completeness.missingLayers.join(', ')}.
+                    В сессии не построена {completeness.missingLayers.join(', ')} — пересчитайте
+                    «Рельеф» с этим слоем либо выберите другую сессию.
                   </div>
                 )}
+                <div>Каких данных не хватает по каждому тайлу — в блоке «Запуск расчёта».</div>
               </div>
             </div>
           )}
         </div>
       </ModuleHeader>
+
+      <RunSetup
+        name={jobName}
+        onNameChange={setJobName}
+        tiles={runTiles}
+        selected={effectiveSelected}
+        onSelectedChange={setSelectedTiles}
+      />
 
       {/* ЦМД */}
       <Card>

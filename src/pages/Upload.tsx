@@ -24,25 +24,28 @@ const NAMING_TOOLTIP =
 // Расхождение СК внутри пары не блокирует расчёт: целевая СК проекта — это СК
 // АФС, и материалы с другой СК приводятся к ней безусловно. Единственное, что
 // снимает тайл с обработки, — отсутствие одного из файлов пары.
-type PairStatus = 'ok' | 'reproject' | 'incomplete' | 'vls_only' | 'afs_only'
+type PairStatus = 'ok' | 'reproject' | 'shifted' | 'incomplete' | 'vls_only' | 'afs_only'
 
-function pairStatus(t: InputTile, mode: InputMode): PairStatus {
+function pairStatus(t: InputTile, mode: InputMode, originTolM: number): PairStatus {
   // Отсутствие целого каталога — это режим работы, а не ошибка валидации.
   if (mode === 'vls-only') return t.vls ? 'vls_only' : 'incomplete'
   if (mode === 'afs-only') return t.afs ? 'afs_only' : 'incomplete'
   if (!t.afs || !t.vls) return 'incomplete'
-  return t.afs.crs === t.vls.crs ? 'ok' : 'reproject'
+  if (t.afs.crs !== t.vls.crs) return 'reproject'
+  const offset = originOffsetM(t)
+  return offset !== null && offset > originTolM ? 'shifted' : 'ok'
 }
 
 const pairLabel: Record<PairStatus, string> = {
-  ok: 'СК совпадают',
+  ok: 'Пара валидна',
   reproject: 'СК разнятся → приведение',
+  shifted: 'Углы разъехались',
   incomplete: 'Неполная пара',
   vls_only: 'Только ВЛС',
   afs_only: 'Только АФС',
 }
 const pairVariant: Record<PairStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  ok: 'success', reproject: 'warning', incomplete: 'neutral',
+  ok: 'success', reproject: 'warning', shifted: 'warning', incomplete: 'neutral',
   vls_only: 'warning', afs_only: 'warning',
 }
 
@@ -153,7 +156,7 @@ export default function Upload() {
     setAssessed(true)
   }
 
-  const statuses = tiles.map((t) => pairStatus(t, mode))
+  const statuses = tiles.map((t) => pairStatus(t, mode, originTolM))
   const hasIncomplete = statuses.includes('incomplete')
   // Тайлы, у которых СК ВЛС отличается от целевой — их приводим и называем поимённо.
   const reprojectTiles = tiles.filter((t, i) => statuses[i] === 'reproject')
@@ -332,7 +335,7 @@ export default function Upload() {
                 </thead>
                 <tbody>
                   {tiles.map((t) => {
-                    const st = pairStatus(t, mode)
+                    const st = pairStatus(t, mode, originTolM)
                     return (
                       <tr key={t.id} className="border-b last:border-0">
                         <td className="py-2.5 pr-4 font-mono text-xs">{t.name}</td>
@@ -376,7 +379,7 @@ export default function Upload() {
                         <td className="py-2.5 pr-4">
                           <div className="flex items-center gap-1.5">
                             {st === 'ok' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                            {st === 'reproject' && <AlertTriangle className="h-4 w-4 text-amber-500" />}
+                            {(st === 'reproject' || st === 'shifted') && <AlertTriangle className="h-4 w-4 text-amber-500" />}
                             {st === 'incomplete' && <AlertTriangle className="h-4 w-4 text-slate-400" />}
                             <Badge variant={pairVariant[st]}>{pairLabel[st]}</Badge>
                           </div>
