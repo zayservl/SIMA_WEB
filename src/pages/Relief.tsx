@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useProjectStore, defaultReliefParams } from '@/store/projectStore'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -11,7 +11,8 @@ import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
-import { defaultJobName } from '@/lib/jobs'
+import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies } from '@/lib/dependencies'
 
 const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
@@ -83,6 +84,10 @@ export default function Relief() {
     withDefaults((location.state as { retryParams?: ReliefParams } | null)?.retryParams)
   )
   const [jobName, setJobName] = useState(() => defaultJobName('relief', jobs, projectId ?? ''))
+  const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+  const runTiles = useMemo(() => moduleRunTiles('relief', inputTiles ?? []), [inputTiles])
+  // По умолчанию на расчёт идут все доступные тайлы.
+  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   // Маппинг предустановок сглаживания → sigma/expert-параметры. В режиме
@@ -105,7 +110,8 @@ export default function Relief() {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
       name: jobName.trim() || defaultJobName('relief', jobs, projectId),
       project_id: projectId, type: 'relief', status: 'queued', progress: 0,
-      tiles_total: 24, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
+      tiles_total: selectedTiles.length, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [],
+      tiles: generateTilesFromNames('relief', selectedTiles),
       started_at: new Date().toISOString(),
       params: {
         ...p,
@@ -123,7 +129,7 @@ export default function Relief() {
 
   const deps = checkDependencies(projectId || '', 'relief')
   const runTooltip = deps.ok
-    ? undefined
+    ? selectedTiles.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
   return (
@@ -136,7 +142,7 @@ export default function Relief() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok || selectedTiles.length === 0} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
 
       {!deps.ok && (

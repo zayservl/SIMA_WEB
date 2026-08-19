@@ -41,6 +41,19 @@ export function generateTiles(type: JobType, count: number): Tile[] {
   return tiles
 }
 
+// Создать список тайлов задачи по именам выбранных входных тайлов.
+// Имя входного тайла — общий номер пары (tile_001), к нему добавляется
+// расширение выхода модуля.
+export function generateTilesFromNames(type: JobType, names: string[]): Tile[] {
+  return names.map((name) => ({
+    id: nextTileId(),
+    name: `${name}.${TILE_EXT[type]}`,
+    kind: TILE_KIND[type],
+    status: 'queued' as const,
+    steps: STEPS_TEMPLATE(type),
+  }))
+}
+
 // Создать «повторный» тайл: новый id, ссылка на исходный, шаги сброшены.
 export function makeRetryTile(source: Tile, type: JobType): Tile {
   return {

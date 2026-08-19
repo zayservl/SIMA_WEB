@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useProjectStore, defaultWaterParams } from '@/store/projectStore'
 import { Card, CardPad } from '@/components/ui/card'
@@ -9,7 +9,8 @@ import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { WaterParams, Job } from '@/api/types'
-import { defaultJobName } from '@/lib/jobs'
+import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
@@ -25,6 +26,10 @@ export default function Water() {
     return { segment: { ...defaultWaterParams.segment, ...retry?.segment } }
   })
   const [jobName, setJobName] = useState(() => defaultJobName('water', jobs, projectId ?? ''))
+  const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+  const runTiles = useMemo(() => moduleRunTiles('water', inputTiles ?? []), [inputTiles])
+  // По умолчанию на расчёт идут все доступные тайлы.
+  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
   const set = <K extends keyof WaterParams>(k: K, v: WaterParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   const handleRun = () => {
@@ -33,7 +38,8 @@ export default function Water() {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
       name: jobName.trim() || defaultJobName('water', jobs, projectId),
       project_id: projectId, type: 'water', status: 'queued', progress: 0,
-      tiles_total: 12, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
+      tiles_total: selectedTiles.length, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [],
+      tiles: generateTilesFromNames('water', selectedTiles),
       started_at: new Date().toISOString(), params: p,
     }
     addJob(job)
@@ -44,7 +50,7 @@ export default function Water() {
 
   const deps = checkDependencies(projectId || '', 'water')
   const runTooltip = deps.ok
-    ? undefined
+    ? selectedTiles.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Загрузите данные на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
   return (
@@ -57,7 +63,7 @@ export default function Water() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok || selectedTiles.length === 0} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
 
       {!deps.ok && (
@@ -67,7 +73,13 @@ export default function Water() {
         </div>
       )}
 
-      <RunSetup name={jobName} onNameChange={setJobName} />
+      <RunSetup
+        name={jobName}
+        onNameChange={setJobName}
+        tiles={runTiles}
+        selected={selectedTiles}
+        onSelectedChange={setSelectedTiles}
+      />
 
       {/* Шапка модуля: СК + единственный источник — АФС */}
       <ModuleHeader projectId={projectId ?? ''}>

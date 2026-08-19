@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useProjectStore, defaultForestParams } from '@/store/projectStore'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -10,7 +10,8 @@ import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod } from '@/api/types'
-import { defaultJobName } from '@/lib/jobs'
+import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
@@ -65,6 +66,10 @@ export default function Forest() {
     withDefaults((location.state as { retryParams?: ForestParams } | null)?.retryParams)
   )
   const [jobName, setJobName] = useState(() => defaultJobName('forest', jobs, projectId ?? ''))
+  const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
+  const runTiles = useMemo(() => moduleRunTiles('forest', inputTiles ?? []), [inputTiles])
+  // По умолчанию на расчёт идут все доступные тайлы.
+  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
   const set = <K extends keyof ForestParams>(k: K, v: ForestParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   // Пресет сглаживания задаёт sigma; в режиме «Пользовательское» её вводят руками.
@@ -85,7 +90,8 @@ export default function Forest() {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
       name: jobName.trim() || defaultJobName('forest', jobs, projectId),
       project_id: projectId, type: 'forest', status: 'queued', progress: 0,
-      tiles_total: 18, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
+      tiles_total: selectedTiles.length, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [],
+      tiles: generateTilesFromNames('forest', selectedTiles),
       started_at: new Date().toISOString(),
       params: {
         ...p,
@@ -102,7 +108,7 @@ export default function Forest() {
 
   const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source })
   const runTooltip = deps.ok
-    ? undefined
+    ? selectedTiles.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
   // Завершённые задачи рельефа в рамках текущего проекта.
@@ -151,7 +157,7 @@ export default function Forest() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun} disabled={!deps.ok} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok || selectedTiles.length === 0} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
 
       {!deps.ok && (
@@ -161,7 +167,13 @@ export default function Forest() {
         </div>
       )}
 
-      <RunSetup name={jobName} onNameChange={setJobName} />
+      <RunSetup
+        name={jobName}
+        onNameChange={setJobName}
+        tiles={runTiles}
+        selected={selectedTiles}
+        onSelectedChange={setSelectedTiles}
+      />
 
       {/* Шапка модуля: СК, сглаживание, разрешение + переключатели источника */}
       <ModuleHeader
