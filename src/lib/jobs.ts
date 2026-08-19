@@ -1,4 +1,4 @@
-import type { Job, JobType } from '@/api/types'
+import type { Job, JobType, ReliefParams, TileStatus } from '@/api/types'
 import type { InputTile } from '@/lib/inputTiles'
 
 const TYPE_LABEL: Record<JobType, string> = { relief: 'Рельеф', forest: 'Древостой', water: 'Вода' }
@@ -48,4 +48,83 @@ export function moduleRunTiles(type: JobType, tiles: InputTile[]): RunTile[] {
 /** Имена доступных к расчёту тайлов — начальный выбор «все». */
 export function availableNames(runTiles: RunTile[]): string[] {
   return runTiles.filter((t) => t.available).map((t) => t.name)
+}
+
+// ---- Полнота сессии «Рельефа» как входа «Древостоя» ----------------------
+
+const TILE_STATUS_REASON: Record<Exclude<TileStatus, 'done'>, string> = {
+  failed: 'расчёт рельефа завершился сбоем',
+  skipped: 'тайл пропущен',
+  queued: 'тайл не считался',
+  running: 'расчёт ещё идёт',
+}
+
+export interface ReliefCompleteness {
+  /** Слои, не построенные во всей сессии: их отключили параметрами расчёта. */
+  missingLayers: string[]
+  /** Тайлы сессии без готового результата — с причиной по каждому. */
+  incompleteTiles: { name: string; reason: string }[]
+  /** Имена тайлов с полным результатом (без расширения файла). */
+  readyTiles: string[]
+}
+
+/** Имя входного тайла из имени тайла задачи: tile_001.tif → tile_001. */
+function baseName(name: string): string {
+  return name.replace(/\.[^.]+$/, '')
+}
+
+/**
+ * Разбор выбранной сессии «Рельефа» как источника данных для «Древостоя».
+ * «Древостою» нужна ЦММ, а при включённой категоризации по уклону — ещё и карта
+ * уклонов: сессия могла быть посчитана без них. Отдельно от этого часть тайлов
+ * сессии могла не досчитаться — по ним данных нет независимо от набора слоёв.
+ */
+export function reliefCompleteness(job: Job | undefined, needSlopes: boolean): ReliefCompleteness {
+  if (!job) return { missingLayers: [], incompleteTiles: [], readyTiles: [] }
+
+  const params = job.params as ReliefParams
+  const missingLayers: string[] = []
+  if (!params.dsm?.enabled) missingLayers.push('ЦММ')
+  if (needSlopes && !params.derivatives?.slopes) missingLayers.push('карта уклонов')
+
+  const incompleteTiles: { name: string; reason: string }[] = []
+  const readyTiles: string[] = []
+  for (const t of job.tiles) {
+    if (t.status === 'done') {
+      readyTiles.push(baseName(t.name))
+    } else {
+      const base = TILE_STATUS_REASON[t.status]
+      incompleteTiles.push({ name: baseName(t.name), reason: t.reason ? `${base}: ${t.reason}` : base })
+    }
+  }
+  // Слоя нет во всей сессии — значит нет и по каждому её тайлу.
+  if (missingLayers.length > 0) {
+    const missing = `в сессии не построена ${missingLayers.join(', ')}`
+    for (const name of readyTiles) incompleteTiles.push({ name, reason: missing })
+    return { missingLayers, incompleteTiles, readyTiles: [] }
+  }
+
+  return { missingLayers, incompleteTiles, readyTiles }
+}
+
+/**
+ * Список тайлов «Древостоя»: доступны только те, по которым выбранная сессия
+ * «Рельефа» дала полный результат. Тайлы проекта, оставшиеся за пределами
+ * сессии, показываются с причиной — иначе их молчаливое исчезновение из списка
+ * выглядит как потеря данных.
+ */
+export function forestRunTiles(
+  tiles: InputTile[],
+  completeness: ReliefCompleteness,
+  hasSession: boolean,
+): RunTile[] {
+  const reasonByName = new Map(completeness.incompleteTiles.map((t) => [t.name, t.reason]))
+  const ready = new Set(completeness.readyTiles)
+
+  return moduleRunTiles('forest', tiles).map((t) => {
+    if (!t.available) return t
+    if (!hasSession) return { ...t, available: false, reason: 'не выбрана сессия «Рельефа»' }
+    if (ready.has(t.name)) return t
+    return { ...t, available: false, reason: reasonByName.get(t.name) ?? 'тайла нет в сессии «Рельефа»' }
+  })
 }

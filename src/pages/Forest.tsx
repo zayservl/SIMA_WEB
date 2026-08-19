@@ -10,7 +10,7 @@ import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
-import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 
@@ -71,9 +71,9 @@ export default function Forest() {
   )
   const [jobName, setJobName] = useState(() => defaultJobName('forest', jobs, projectId ?? ''))
   const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
-  const runTiles = useMemo(() => moduleRunTiles('forest', inputTiles ?? []), [inputTiles])
-  // По умолчанию на расчёт идут все доступные тайлы.
-  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
+  // Набор доступных тайлов задаёт выбранная сессия «Рельефа», поэтому выбор
+  // пересобирается при её смене, а не один раз при монтировании.
+  const [selectedTiles, setSelectedTiles] = useState<string[]>([])
   const set = <K extends keyof ForestParams>(k: K, v: ForestParams[K]) => setP((s) => ({ ...s, [k]: v }))
   const setLogging = (patch: Partial<LoggingCategoryParams>) =>
     setP((s) => ({ ...s, logging_category: { ...s.logging_category, ...patch } }))
@@ -102,8 +102,8 @@ export default function Forest() {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
       name: jobName.trim() || defaultJobName('forest', jobs, projectId),
       project_id: projectId, type: 'forest', status: 'queued', progress: 0,
-      tiles_total: selectedTiles.length, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [],
-      tiles: generateTilesFromNames('forest', selectedTiles),
+      tiles_total: effectiveSelected.length, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [],
+      tiles: generateTilesFromNames('forest', effectiveSelected),
       started_at: new Date().toISOString(),
       params: {
         ...p,
@@ -118,32 +118,32 @@ export default function Forest() {
 
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
-  const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source })
-  const runTooltip = deps.ok
-    ? selectedTiles.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
-    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
-
-  // Завершённые задачи рельефа в рамках текущего проекта.
+  // Результаты «Рельефа» текущего проекта: показываем все сессии, где посчитан
+  // хотя бы один тайл. Отсеивать неполные нельзя — по ним нужно показать, каких
+  // именно данных не хватает.
   const reliefJobs = projectId
-    ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.status === 'success')
+    ? jobs.filter((j) => j.project_id === projectId && j.type === 'relief' && j.tiles.some((t) => t.status === 'done'))
     : []
 
-  // Источник ЦММ — только сессии, где ЦММ действительно строилась: сервис
-  // рельефа выполняет шаг ЦММ лишь при dsm.enabled, иначе растра в сессии нет.
-  const dsmJobs = reliefJobs.filter((j) => (j.params as ReliefParams).dsm?.enabled)
+  const useSlopeMap = p.logging_category.enabled && p.logging_category.slope_rule.enabled
+  const selectedJob = reliefJobs.find((j) => (j.session_id ?? j.id) === p.dsm_source.system_session_id)
 
   // Отдельного выбора производных рельефа нет: они подставляются из той же
   // сессии, что и ЦММ. Держим derivatives_source синхронным с dsm_source.
-  const setDsmSession = (sessionId: string | undefined) =>
+  const setDsmSession = (sessionId: string | undefined) => {
     setP((s) => ({
       ...s,
       dsm_source: { ...s.dsm_source, system_session_id: sessionId },
       derivatives_source: { ...s.derivatives_source, kind: s.dsm_source.kind, system_session_id: sessionId },
     }))
+    const next = reliefJobs.find((j) => (j.session_id ?? j.id) === sessionId)
+    setSelectedTiles(availableNames(
+      forestRunTiles(inputTiles ?? [], reliefCompleteness(next, useSlopeMap), !!sessionId),
+    ))
+  }
 
   // Какие производные реально посчитаны в выбранной сессии — показываем, чтобы
   // выбор ЦММ не тянул за собой молчаливо пустой набор производных.
-  const selectedJob = dsmJobs.find((j) => (j.session_id ?? j.id) === p.dsm_source.system_session_id)
   const selectedDerivatives = selectedJob
     ? (() => {
         const d = (selectedJob.params as ReliefParams).derivatives
@@ -154,6 +154,25 @@ export default function Forest() {
         ].filter(Boolean) as string[]
       })()
     : null
+
+  // Полнота выбранной сессии и, как следствие, набор тайлов, доступных модулю.
+  const completeness = useMemo(() => reliefCompleteness(selectedJob, useSlopeMap), [selectedJob, useSlopeMap])
+  const runTiles = useMemo(
+    () => forestRunTiles(inputTiles ?? [], completeness, !!selectedJob),
+    [inputTiles, completeness, selectedJob],
+  )
+
+  // Выбор мог быть сделан до того, как набор доступных тайлов сузился —
+  // например, при включении правила по уклону в сессии без карты уклонов.
+  const effectiveSelected = useMemo(() => {
+    const available = new Set(availableNames(runTiles))
+    return selectedTiles.filter((n) => available.has(n))
+  }, [selectedTiles, runTiles])
+
+  const deps = checkDependencies(projectId || '', 'forest', { dsm_source: p.dsm_source })
+  const runTooltip = deps.ok
+    ? effectiveSelected.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
+    : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
   // Границы категорий обязаны возрастать: иначе интервал схлопывается и
   // категория никогда не встретится в результате.
@@ -174,7 +193,7 @@ export default function Forest() {
             {isRetry && <span className="ml-2 text-brand-600">· повтор с новыми параметрами (новая сессия)</span>}
           </p>
         </div>
-        <Button onClick={handleRun} disabled={!deps.ok || selectedTiles.length === 0} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
+        <Button onClick={handleRun} disabled={!deps.ok || effectiveSelected.length === 0} title={runTooltip}><Play className="h-4 w-4" /> Запустить</Button>
       </div>
 
       {!deps.ok && (
@@ -188,7 +207,7 @@ export default function Forest() {
         name={jobName}
         onNameChange={setJobName}
         tiles={runTiles}
-        selected={selectedTiles}
+        selected={effectiveSelected}
         onSelectedChange={setSelectedTiles}
       />
 
@@ -211,14 +230,14 @@ export default function Forest() {
             onChange={(e) => setDsmSession(e.target.value || undefined)}
           >
             <option value="">— выбрать сессию —</option>
-            {dsmJobs.map((j) => (
+            {reliefJobs.map((j) => (
               <option key={j.id} value={j.session_id ?? j.id}>
-                {j.session_id ?? j.id}
+                {j.name} · {j.tiles_done}/{j.tiles_total} тайлов · {j.session_id ?? j.id}
               </option>
             ))}
           </Select>
-          {dsmJobs.length === 0 ? (
-            <p className="hint-base mt-1.5">Нет сессий «Рельефа» с построенной ЦММ</p>
+          {reliefJobs.length === 0 ? (
+            <p className="hint-base mt-1.5">Нет рассчитанных сессий «Рельефа»</p>
           ) : selectedDerivatives ? (
             <p className="hint-base mt-1.5">
               Производные рельефа подставляются из этой же сессии:{' '}
@@ -226,6 +245,31 @@ export default function Forest() {
             </p>
           ) : (
             <p className="hint-base mt-1.5">Производные рельефа подставляются из выбранной сессии автоматически</p>
+          )}
+
+          {/* Неполнота выбранной сессии: по каким тайлам чего не хватает */}
+          {completeness.incompleteTiles.length > 0 && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-1">
+                <div className="font-medium">
+                  В выбранной сессии «Рельефа» посчитаны не все данные — {completeness.incompleteTiles.length} тайлов
+                  недоступны «Древостою»:
+                </div>
+                <ul className="space-y-0.5">
+                  {completeness.incompleteTiles.map((t) => (
+                    <li key={t.name}>
+                      <span className="font-mono">{t.name}</span> — {t.reason}
+                    </li>
+                  ))}
+                </ul>
+                {completeness.missingLayers.length > 0 && (
+                  <div>
+                    Пересчитайте «Рельеф» с построением: {completeness.missingLayers.join(', ')}.
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </ModuleHeader>
