@@ -66,6 +66,11 @@ const RESOLUTION_OPTIONS: { value: ResolutionPreset; label: string }[] = [
   { value: '2m', label: '2 м' },
 ]
 
+/** Пресет → метры на пиксель. 'native' и 'custom' задаются иначе. */
+const RESOLUTION_METRES: Partial<Record<ResolutionPreset, number>> = {
+  '0.1m': 0.1, '0.25m': 0.25, '0.5m': 0.5, '1m': 1, '2m': 2,
+}
+
 const CUSTOM_SMOOTHING_LABEL = 'Пользовательское'
 const CUSTOM_RESOLUTION_LABEL = 'Пользовательское'
 
@@ -87,8 +92,15 @@ export function ModuleHeader({
   const crs = project?.scene.target_crs ?? ''
   const crsEmpty = !crs
 
-  // Предупреждение: разрешение мельче исходного (демо-логика: всё не-native).
-  const resolutionWarn = !!resolutionPreset && resolutionPreset !== 'native'
+  // Предупреждение имеет смысл только против фактического разрешения съёмки:
+  // просить ячейку мельче исходной — значит рисовать детали, которых в данных
+  // нет. Разрешение читается из оценки материалов; без неё сравнивать не с чем.
+  const nativeResM = useProjectStore((s) => (projectId ? s.assessment[projectId]?.afs?.resolution_m : undefined))
+  const selectedResM = resolutionPreset
+    ? resolutionPreset === 'custom' ? customResolutionM : RESOLUTION_METRES[resolutionPreset]
+    : undefined
+  const resolutionWarn =
+    selectedResM !== undefined && nativeResM !== undefined && selectedResM < nativeResM
   const smoothingCustomizable = !!customSmoothing && !!onCustomSmoothingChange
   const resolutionCustomizable = customResolutionM !== undefined && !!onCustomResolutionChange
 
@@ -149,12 +161,18 @@ export function ModuleHeader({
                     onChange={onCustomResolutionChange!}
                   />
                   <p className="hint-base mt-1">м/пиксель</p>
+                  {resolutionWarn && (
+                    <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-600">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      <span>Мельче исходного ({nativeResM} м) — детализация не вырастет</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 resolutionWarn && (
                   <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-600">
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    <span>Разрешение мельче исходного — возможно ухудшение качества</span>
+                    <span>Мельче исходного ({nativeResM} м) — детализация не вырастет</span>
                   </div>
                 )
               )}
