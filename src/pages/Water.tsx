@@ -6,8 +6,10 @@ import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { NumberInput, Field } from '@/components/ui/controls'
 import { ModuleHeader } from '@/components/ui/ModuleHeader'
+import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { WaterParams, Job } from '@/api/types'
+import { defaultJobName } from '@/lib/jobs'
 import { checkDependencies } from '@/lib/dependencies'
 
 export default function Water() {
@@ -15,18 +17,21 @@ export default function Water() {
   const navigate = useNavigate()
   const location = useLocation()
   const addJob = useProjectStore((s) => s.addJob)
+  const jobs = useProjectStore((s) => s.jobs)
   // Повтор старой сессии: из сохранённых параметров берём только те, что
   // остались в контракте (ЦМР и разрешение из модуля убраны).
   const [p, setP] = useState<WaterParams>(() => {
     const retry = (location.state as { retryParams?: WaterParams } | null)?.retryParams
     return { segment: { ...defaultWaterParams.segment, ...retry?.segment } }
   })
+  const [jobName, setJobName] = useState(() => defaultJobName('water', jobs, projectId ?? ''))
   const set = <K extends keyof WaterParams>(k: K, v: WaterParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   const handleRun = () => {
     if (!projectId) return
     const job: Job = {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
+      name: jobName.trim() || defaultJobName('water', jobs, projectId),
       project_id: projectId, type: 'water', status: 'queued', progress: 0,
       tiles_total: 12, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
       started_at: new Date().toISOString(), params: p,
@@ -61,6 +66,8 @@ export default function Water() {
           <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
         </div>
       )}
+
+      <RunSetup name={jobName} onNameChange={setJobName} />
 
       {/* Шапка модуля: СК + единственный источник — АФС */}
       <ModuleHeader projectId={projectId ?? ''}>

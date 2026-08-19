@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
+import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
+import { defaultJobName } from '@/lib/jobs'
 import { checkDependencies } from '@/lib/dependencies'
 
 const FILTER_METHOD_LABELS: Record<FilterMethod, string> = {
@@ -75,10 +77,12 @@ export default function Relief() {
   const { settings } = useSettingsStore()
   const projects = useProjectStore((s) => s.projects)
   const addJob = useProjectStore((s) => s.addJob)
+  const jobs = useProjectStore((s) => s.jobs)
   const project = projects.find((p) => p.id === projectId)
   const [p, setP] = useState<ReliefParams>(() =>
     withDefaults((location.state as { retryParams?: ReliefParams } | null)?.retryParams)
   )
+  const [jobName, setJobName] = useState(() => defaultJobName('relief', jobs, projectId ?? ''))
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   // Маппинг предустановок сглаживания → sigma/expert-параметры. В режиме
@@ -99,6 +103,7 @@ export default function Relief() {
     if (!projectId) return
     const job: Job = {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
+      name: jobName.trim() || defaultJobName('relief', jobs, projectId),
       project_id: projectId, type: 'relief', status: 'queued', progress: 0,
       tiles_total: 24, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
       started_at: new Date().toISOString(),

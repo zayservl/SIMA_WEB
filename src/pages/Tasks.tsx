@@ -9,7 +9,7 @@ import { artifactsFor, tileDir } from '@/lib/outputs'
 import type { Job, JobType, Tile, TileStatus, StepStatus } from '@/api/types'
 import {
   CheckCircle2, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Circle,
-  Search, SkipForward, Square, SlidersHorizontal, Ban, AlertTriangle,
+  Search, SkipForward, Square, SlidersHorizontal, Ban, AlertTriangle, Pencil, Check, X,
 } from 'lucide-react'
 
 const statusVariant: Record<Job['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
@@ -205,6 +205,57 @@ export default function Tasks() {
   )
 }
 
+// Имя расчёта: показ и правка на месте. Пустое имя не сохраняется — задача
+// без имени неотличима от соседних в списке.
+function JobName({ job }: { job: Job }) {
+  const updateJob = useProjectStore((s) => s.updateJob)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(job.name)
+
+  const commit = () => {
+    const next = draft.trim()
+    if (next) updateJob(job.id, { name: next })
+    else setDraft(job.name)
+    setEditing(false)
+  }
+  const cancel = () => { setDraft(job.name); setEditing(false) }
+
+  if (!editing) {
+    return (
+      <span className="group inline-flex items-center gap-1.5">
+        <span className="text-sm font-semibold">{job.name}</span>
+        <button
+          onClick={() => { setDraft(job.name); setEditing(true) }}
+          title="Переименовать расчёт"
+          className="text-slate-300 opacity-0 transition-opacity hover:text-slate-500 group-hover:opacity-100"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') cancel() }}
+        onBlur={commit}
+        className="h-7 w-56 rounded-md border border-slate-200 px-2 text-sm font-semibold focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+      />
+      {/* onMouseDown, а не onClick: blur поля срабатывает раньше клика и закрыл бы правку */}
+      <button onMouseDown={(e) => { e.preventDefault(); commit() }} title="Сохранить" className="text-emerald-600 hover:text-emerald-700">
+        <Check className="h-3.5 w-3.5" />
+      </button>
+      <button onMouseDown={(e) => { e.preventDefault(); cancel() }} title="Отменить" className="text-slate-400 hover:text-slate-600">
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </span>
+  )
+}
+
 function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute, onRecomputeFailed }: {
   job: Job
   seed?: number
@@ -250,7 +301,8 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
             {icon}
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">{typeLabel[job.type]}</span>
+                <JobName job={job} />
+                <Badge variant="neutral">{typeLabel[job.type]}</Badge>
                 <Badge variant={statusVariant[job.status]}>{statusLabel[job.status]}</Badge>
               </div>
               <div className="text-xs text-slate-500">
@@ -266,7 +318,7 @@ function JobCard({ job, seed, deterministic, recomputeSrc, onRetry, onRecompute,
               </div>
               {recomputeSrc && (
                 <div className="mt-0.5 text-[11px] text-slate-400">
-                  пересчёт от {typeLabel[recomputeSrc.type]} · сессия {recomputeSrc.session_id}
+                  пересчёт от «{recomputeSrc.name}» · сессия {recomputeSrc.session_id}
                 </div>
               )}
             </div>

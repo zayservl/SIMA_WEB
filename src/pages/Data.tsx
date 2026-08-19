@@ -201,7 +201,8 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
             <FolderTree className="h-5 w-5 text-slate-400" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">{typeLabel[job.type]}</span>
+                <span className="text-sm font-semibold">{job.name}</span>
+                <Badge variant="neutral">{typeLabel[job.type]}</Badge>
                 <Badge variant={statusVariant[job.status]}>{statusLabel[job.status]}</Badge>
                 {job.session_id && <span className="font-mono text-[10px] text-slate-400">сессия {job.session_id}</span>}
                 <span className={cn('text-[10px]', deterministic ? 'text-emerald-600' : 'text-slate-400')}>
@@ -216,7 +217,7 @@ function SessionCard({ job, onArchive }: { job: Job; onArchive: (what: string) =
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => onArchive(`${typeLabel[job.type]} · сессия ${job.session_id}`)} disabled={doneTiles.length === 0}>
+            <Button variant="outline" size="sm" onClick={() => onArchive(`${job.name} · сессия ${job.session_id}`)} disabled={doneTiles.length === 0}>
               <FileArchive className="h-3.5 w-3.5" /> Архив задачи
             </Button>
           </div>

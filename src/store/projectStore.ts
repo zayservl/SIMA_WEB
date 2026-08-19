@@ -209,6 +209,7 @@ export const useProjectStore = create<ProjectStore>()(
           }))
           const newJob: Job = {
             id: 'j-' + Math.random().toString(36).slice(2, 10),
+            name: `${src.name} (пересчёт)`,
             project_id: src.project_id,
             type: src.type,
             status: 'queued',

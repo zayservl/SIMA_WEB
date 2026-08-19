@@ -135,6 +135,12 @@ export interface Tile {
 export interface Job {
   id: string
   project_id: string
+  /**
+   * Имя расчёта. Задаётся пользователем при запуске и правится потом в очереди
+   * задач: сессии различаются параметрами и набором тайлов, по одному лишь типу
+   * модуля и идентификатору сессии их не различить.
+   */
+  name: string
   type: JobType
   status: JobStatus
   progress: number

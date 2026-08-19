@@ -7,8 +7,10 @@ import { Accordion } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox, Radio, NumberInput, Field, Input, InfoHint, Select } from '@/components/ui/controls'
 import { ModuleHeader, SIGMA_BY_PRESET } from '@/components/ui/ModuleHeader'
+import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, ParamMode, VoidFillMethod } from '@/api/types'
+import { defaultJobName } from '@/lib/jobs'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 
 // Выбор способа определения параметров блока. В режиме «ИИ» ручные параметры
@@ -62,6 +64,7 @@ export default function Forest() {
   const [p, setP] = useState<ForestParams>(() =>
     withDefaults((location.state as { retryParams?: ForestParams } | null)?.retryParams)
   )
+  const [jobName, setJobName] = useState(() => defaultJobName('forest', jobs, projectId ?? ''))
   const set = <K extends keyof ForestParams>(k: K, v: ForestParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   // Пресет сглаживания задаёт sigma; в режиме «Пользовательское» её вводят руками.
@@ -80,6 +83,7 @@ export default function Forest() {
     if (!projectId) return
     const job: Job = {
       id: 'j-' + Math.random().toString(36).slice(2, 9),
+      name: jobName.trim() || defaultJobName('forest', jobs, projectId),
       project_id: projectId, type: 'forest', status: 'queued', progress: 0,
       tiles_total: 18, tiles_done: 0, tiles_failed: 0, tiles_skipped: 0, failed_tiles: [], tiles: [],
       started_at: new Date().toISOString(),
@@ -156,6 +160,8 @@ export default function Forest() {
           <span>Не хватает: {deps.missing.map((m) => `${m.layer} (вкладка «${m.tab}»)`).join(', ')}</span>
         </div>
       )}
+
+      <RunSetup name={jobName} onNameChange={setJobName} />
 
       {/* Шапка модуля: СК, сглаживание, разрешение + переключатели источника */}
       <ModuleHeader
