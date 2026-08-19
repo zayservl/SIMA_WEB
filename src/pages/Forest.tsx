@@ -9,7 +9,7 @@ import { ModuleHeader, SMOOTHING_BY_PRESET } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ForestParams, Job, ReliefParams, SmoothingPreset, ResolutionPreset, VoidFillMethod, LoggingCategoryParams } from '@/api/types'
-import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness } from '@/lib/jobs'
+import { defaultJobName, availableNames, forestRunTiles, reliefCompleteness, inheritedSelection } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies, hasAfs } from '@/lib/dependencies'
 import { withPlural, TILES } from '@/lib/plural'
@@ -116,9 +116,10 @@ export default function Forest() {
       derivatives_source: { ...s.derivatives_source, kind: s.dsm_source.kind, system_session_id: sessionId },
     }))
     const next = reliefJobs.find((j) => (j.session_id ?? j.id) === sessionId)
-    setSelectedTiles(availableNames(
+    const nextAvailable = availableNames(
       forestRunTiles(inputTiles ?? [], reliefCompleteness(next, useSlopeMap), !!sessionId),
-    ))
+    )
+    setSelectedTiles(inheritedSelection(projectId ?? '', jobs, nextAvailable).names)
   }
 
   // Какие производные реально посчитаны в выбранной сессии — показываем, чтобы
@@ -153,14 +154,46 @@ export default function Forest() {
     ? effectiveSelected.length === 0 ? 'Не выбрано ни одного тайла для расчёта' : undefined
     : 'Не хватает: ' + deps.missing.map((m) => m.layer).join(', ') + '. Рассчитайте на вкладке: ' + deps.missing.map((m) => m.tab).join(', ')
 
+  // Детекция крон идёт по ортофотоплану: без АФС расчёт недоступен.
+  const afsAvailable = hasAfs(projectId || '')
+  const detectionEnabled = p.detection.enabled && afsAvailable
+
+  const inherited = useMemo(
+    () => inheritedSelection(projectId ?? '', jobs, availableNames(runTiles)),
+    [projectId, jobs, runTiles],
+  )
+
+  const runSummary = useMemo(() => {
+    const outputs = [
+      p.cmd.enabled && 'ЦМД',
+      p.cmd.channels.intensity && 'интенсивность',
+      p.cmd.channels.density && 'плотность точек',
+      detectionEnabled && 'вершины и кроны',
+      p.stats.enabled && detectionEnabled && 'статистики по сегментам',
+      p.logging_category.enabled && 'категории рубки',
+      p.cmd.save_classified_las && 'классифицированное облако',
+    ].filter(Boolean) as string[]
+    const lines = [
+      `Выходы: ${outputs.join(', ') || 'ничего не выбрано'}`,
+      `Пороги ярусов: поверхность ${p.cmd.threshold_surface} м, кустарник ${p.cmd.threshold_shrub} м`,
+    ]
+    if (detectionEnabled) {
+      lines.push(`Окно поиска вершин: ${p.detection.peak_size_m} м · высоты ${p.detection.min_height_m}–${p.detection.max_height_m} м`)
+    }
+    if (p.logging_category.enabled) {
+      const [h0, h1, h2] = p.logging_category.height_limits_m
+      lines.push(
+        `Категории рубки: ≤${h0} / ≤${h1} / ≤${h2} / >${h2} м` +
+          (p.logging_category.slope_rule.enabled ? ` · уклон >${p.logging_category.slope_rule.threshold_deg}° → 3` : ''),
+      )
+    }
+    return lines
+  }, [p, detectionEnabled])
+
   // Границы категорий обязаны возрастать: иначе интервал схлопывается и
   // категория никогда не встретится в результате.
   const [h0, h1, h2] = p.logging_category.height_limits_m
   const limitsAscending = h0 < h1 && h1 < h2
-
-  // Детекция крон идёт по ортофотоплану: без АФС расчёт недоступен.
-  const afsAvailable = hasAfs(projectId || '')
-  const detectionEnabled = p.detection.enabled && afsAvailable
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -252,6 +285,8 @@ export default function Forest() {
         tiles={runTiles}
         selected={effectiveSelected}
         onSelectedChange={setSelectedTiles}
+        inheritedFrom={inherited.from}
+        summary={runSummary}
       />
 
       {/* ЦМД */}

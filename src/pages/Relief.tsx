@@ -11,7 +11,7 @@ import { METHOD_TOOLTIPS } from '@/lib/methodTooltips'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { ReliefParams, Job, SmoothingPreset, FilterMethod, VoidFillMethod } from '@/api/types'
-import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { defaultJobName, moduleRunTiles, availableNames, inheritedSelection } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies } from '@/lib/dependencies'
 
@@ -85,8 +85,13 @@ export default function Relief() {
   const [jobName, setJobName] = useState(() => defaultJobName('relief', jobs, projectId ?? ''))
   const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
   const runTiles = useMemo(() => moduleRunTiles('relief', inputTiles ?? []), [inputTiles])
-  // По умолчанию на расчёт идут все доступные тайлы.
-  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
+  // Набор наследуется от прошлого расчёта проекта: пользователь уже выбрал
+  // интересующую его часть участка, отмечать её заново незачем.
+  const inherited = useMemo(
+    () => inheritedSelection(projectId ?? '', jobs, availableNames(runTiles)),
+    [projectId, jobs, runTiles],
+  )
+  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => inherited.names)
   const set = <K extends keyof ReliefParams>(k: K, v: ReliefParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   // Сечения вводятся строкой: набор шагов, а не фиксированное число полей.
@@ -139,6 +144,30 @@ export default function Relief() {
     navigate(`/projects/${projectId}/tasks`)
   }
 
+  // Сводка «что пойдёт в расчёт»: собрать это, пролистывая аккордеоны, долго.
+  const runSummary = useMemo(() => {
+    const outputs = [
+      'ЦМР',
+      p.dsm.enabled && 'ЦММ',
+      p.derivatives.slopes && 'уклоны',
+      p.derivatives.aspect && 'экспозиции',
+      p.derivatives.tpi && 'TPI',
+      p.vectors.horizontals.length > 0 && `горизонтали ${p.vectors.horizontals.join('/')} м`,
+      p.heights.enabled && 'отметки высот',
+      p.vectors.tin && 'TIN',
+      p.save_measured_mask && 'маска измеренных ячеек',
+    ].filter(Boolean) as string[]
+    const smoothing = p.smoothing.enabled
+      ? `сглаживание σ ${p.smoothing.sigma}, окно ${p.smoothing.window}`
+      : 'без сглаживания'
+    return [
+      `Выходы: ${outputs.join(', ')}`,
+      `Классификация: ${FILTER_METHOD_LABELS[p.filter_method]} · ${smoothing}`,
+      `Заполнение пустот: ${p.derivatives.fill_method}, ${p.derivatives.fill_passes} прох.` +
+        (p.derivatives.hydro_flatten ? ', гидровыравнивание' : ''),
+    ]
+  }, [p])
+
   const isRetry = !!(location.state as { retryParams?: unknown } | null)?.retryParams
 
   const deps = checkDependencies(projectId || '', 'relief')
@@ -184,6 +213,8 @@ export default function Relief() {
         tiles={runTiles}
         selected={selectedTiles}
         onSelectedChange={setSelectedTiles}
+        inheritedFrom={inherited.from}
+        summary={runSummary}
       />
 
       {/* Классификация рельефа */}

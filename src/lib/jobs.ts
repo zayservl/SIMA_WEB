@@ -166,6 +166,28 @@ export function forestRunTiles(
   })
 }
 
+/**
+ * Выбор тайлов, унаследованный от прошлого расчёта проекта. Пользователь уже
+ * решил, какая часть участка его интересует, — заставлять отмечать её заново в
+ * каждом модуле незачем. Берётся последняя запущенная сессия проекта, её набор
+ * пересекается с доступным здесь; пустое пересечение наследовать нечего.
+ */
+export function inheritedSelection(
+  projectId: string,
+  jobs: Job[],
+  available: string[],
+): { names: string[]; from?: string } {
+  const own = jobs.filter((j) => j.project_id === projectId && j.started_at)
+  if (own.length === 0) return { names: available }
+  const latest = own.reduce((a, b) => (a.started_at! > b.started_at! ? a : b))
+
+  const pool = new Set(available)
+  const names = latest.tiles.map((t) => t.name.replace(/\.[^.]+$/, '')).filter((n) => pool.has(n))
+  // Наследовать полный набор — то же самое, что выбрать всё: подпись не нужна.
+  if (names.length === 0 || names.length === available.length) return { names: available }
+  return { names, from: latest.name }
+}
+
 /** Шаги маршрута проекта для пустых экранов: что уже сделано и куда идти дальше. */
 export function projectRoute(projectId: string, jobs: Job[], hasTiles: boolean) {
   const done = (type: JobType) =>

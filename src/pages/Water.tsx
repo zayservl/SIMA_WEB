@@ -9,7 +9,7 @@ import { ModuleHeader } from '@/components/ui/ModuleHeader'
 import { RunSetup } from '@/components/ui/RunSetup'
 import { Play, AlertTriangle } from 'lucide-react'
 import type { WaterParams, Job } from '@/api/types'
-import { defaultJobName, moduleRunTiles, availableNames } from '@/lib/jobs'
+import { defaultJobName, moduleRunTiles, availableNames, inheritedSelection } from '@/lib/jobs'
 import { generateTilesFromNames } from '@/lib/tiles'
 import { checkDependencies } from '@/lib/dependencies'
 
@@ -28,8 +28,11 @@ export default function Water() {
   const [jobName, setJobName] = useState(() => defaultJobName('water', jobs, projectId ?? ''))
   const inputTiles = useProjectStore((s) => (projectId ? s.inputTiles[projectId] : undefined))
   const runTiles = useMemo(() => moduleRunTiles('water', inputTiles ?? []), [inputTiles])
-  // По умолчанию на расчёт идут все доступные тайлы.
-  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => availableNames(runTiles))
+  const inherited = useMemo(
+    () => inheritedSelection(projectId ?? '', jobs, availableNames(runTiles)),
+    [projectId, jobs, runTiles],
+  )
+  const [selectedTiles, setSelectedTiles] = useState<string[]>(() => inherited.names)
   const set = <K extends keyof WaterParams>(k: K, v: WaterParams[K]) => setP((s) => ({ ...s, [k]: v }))
 
   const handleRun = () => {
@@ -88,6 +91,8 @@ export default function Water() {
         tiles={runTiles}
         selected={selectedTiles}
         onSelectedChange={setSelectedTiles}
+        inheritedFrom={inherited.from}
+        summary={[`Выходы: маска воды, болота, охранные зоны`, `Порог уверенности: ${p.segment.threshold}`]}
       />
 
       {/* Сегментация вод */}

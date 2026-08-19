@@ -2,10 +2,11 @@
 // и выбор тайлов, отправляемых на расчёт. Одинаков для всех модулей, поэтому
 // вынесен из страниц в один компонент.
 
+import { useState } from 'react'
 import { Card, CardPad, CardHeader } from '@/components/ui/card'
 import { Field, Input } from '@/components/ui/controls'
 import { cn } from '@/lib/utils'
-import { AlertTriangle, Grid3x3 } from 'lucide-react'
+import { AlertTriangle, Grid3x3, Search, ListChecks } from 'lucide-react'
 import { availableNames, groupByReason, type RunTile } from '@/lib/jobs'
 import { withPlural, TILES } from '@/lib/plural'
 
@@ -19,16 +20,37 @@ function namesLabel(names: string[], total: number): string {
   return `${names.slice(0, NAMES_LIMIT).join(', ')} и ещё ${withPlural(names.length - NAMES_LIMIT, TILES)}`
 }
 
-export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange }: {
+type TileFilter = 'all' | 'available' | 'unavailable'
+
+const FILTERS: { key: TileFilter; label: string }[] = [
+  { key: 'all', label: 'Все' },
+  { key: 'available', label: 'Доступные' },
+  { key: 'unavailable', label: 'Недоступные' },
+]
+
+export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange, inheritedFrom, summary }: {
   name: string
   onNameChange: (v: string) => void
   tiles: RunTile[]
   selected: string[]
   onSelectedChange: (v: string[]) => void
+  /** Имя расчёта, из которого унаследован набор тайлов. */
+  inheritedFrom?: string
+  /** Строки сводки «что пойдёт в расчёт» — состав задаёт сам модуль. */
+  summary?: string[]
 }) {
+  const [filter, setFilter] = useState<TileFilter>('all')
+  const [query, setQuery] = useState('')
+
   const available = availableNames(tiles)
   const unavailable = tiles.filter((t) => !t.available)
   const allSelected = available.length > 0 && selected.length === available.length
+
+  const visible = tiles.filter((t) => {
+    if (filter === 'available' && !t.available) return false
+    if (filter === 'unavailable' && t.available) return false
+    return !query || t.name.toLowerCase().includes(query.toLowerCase())
+  })
 
   const toggle = (tileName: string) =>
     onSelectedChange(
@@ -67,7 +89,41 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
               >
                 {allSelected ? 'Снять все' : 'Выбрать все'}
               </button>
+              {inheritedFrom && (
+                <span className="text-xs text-slate-400">
+                  набор унаследован из «{inheritedFrom}»
+                </span>
+              )}
             </div>
+
+            {tiles.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {FILTERS.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => setFilter(f.key)}
+                      className={cn(
+                        'rounded-md px-2.5 py-1 text-xs transition-colors',
+                        filter === f.key ? 'bg-brand-50 font-medium text-brand-700' : 'text-slate-500 hover:bg-slate-50',
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative ml-auto">
+                  <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Поиск по имени…"
+                    className="h-8 w-48 rounded-lg border border-slate-200 bg-white pl-7 pr-3 text-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                  />
+                </div>
+              </div>
+            )}
 
             {tiles.length === 0 ? (
               <p className="hint-base">
@@ -77,7 +133,10 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
             ) : (
               <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 p-2">
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
-                  {tiles.map((t) => (
+                  {visible.length === 0 && (
+                    <p className="hint-base col-span-full py-2">Под фильтр ничего не подошло</p>
+                  )}
+                  {visible.map((t) => (
                     <label
                       key={t.name}
                       title={t.reason}
@@ -122,6 +181,23 @@ export function RunSetup({ name, onNameChange, tiles, selected, onSelectedChange
               </p>
             )}
           </div>
+
+          {/* Что реально пойдёт в расчёт: иначе это приходится собирать,
+              пролистывая все аккордеоны параметров. */}
+          {summary && summary.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <ListChecks className="h-3.5 w-3.5 text-slate-400" />
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Пойдёт в расчёт
+                </span>
+              </div>
+              <ul className="space-y-0.5 text-xs text-slate-600">
+                {summary.map((line) => <li key={line}>{line}</li>)}
+                <li>Тайлов: {selected.length}</li>
+              </ul>
+            </div>
+          )}
         </div>
       </CardPad>
     </Card>
