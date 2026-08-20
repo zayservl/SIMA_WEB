@@ -18,19 +18,22 @@ import {
 const NAMING_TOOLTIP =
   'Файлы АФС и ВЛС спариваются по числовому индексу в имени: 000100.tif + pt000100.las → tile_001. ' +
   'Индекс — шесть цифр с ведущими нулями, регистр расширения не важен. ' +
-  'Файлы, для которых не нашлась пара, показываются как неполные и пропускаются при пакетной обработке. ' +
+  'Файл, для которого не нашлась пара, из списка не выпадает: он считается теми модулями, ' +
+  'которым хватает его типа материала. ' +
   'Пробелы, кириллица и точки внутри имени не допускаются.'
 
 // Расхождение СК внутри пары не блокирует расчёт: целевая СК проекта — это СК
-// АФС, и материалы с другой СК приводятся к ней безусловно. Единственное, что
-// снимает тайл с обработки, — отсутствие одного из файлов пары.
-type PairStatus = 'ok' | 'reproject' | 'shifted' | 'incomplete' | 'vls_only' | 'afs_only'
+// АФС, и материалы с другой СК приводятся к ней безусловно. Неполная пара тоже
+// не снимает тайл с обработки целиком: она закрывает только те модули, которым
+// не хватает материала — «Рельеф» и «Древостой» идут по ВЛС, «Вода» — по АФС.
+type PairStatus = 'ok' | 'reproject' | 'shifted' | 'no_afs' | 'no_vls' | 'vls_only' | 'afs_only'
 
 function pairStatus(t: InputTile, mode: InputMode, originTolM: number): PairStatus {
   // Отсутствие целого каталога — это режим работы, а не ошибка валидации.
-  if (mode === 'vls-only') return t.vls ? 'vls_only' : 'incomplete'
-  if (mode === 'afs-only') return t.afs ? 'afs_only' : 'incomplete'
-  if (!t.afs || !t.vls) return 'incomplete'
+  if (mode === 'vls-only') return t.vls ? 'vls_only' : 'no_vls'
+  if (mode === 'afs-only') return t.afs ? 'afs_only' : 'no_afs'
+  if (!t.vls) return 'no_vls'
+  if (!t.afs) return 'no_afs'
   if (t.afs.crs !== t.vls.crs) return 'reproject'
   const offset = originOffsetM(t)
   return offset !== null && offset > originTolM ? 'shifted' : 'ok'
@@ -40,12 +43,14 @@ const pairLabel: Record<PairStatus, string> = {
   ok: 'Пара валидна',
   reproject: 'СК разнятся → приведение',
   shifted: 'Углы разъехались',
-  incomplete: 'Неполная пара',
+  no_afs: 'Нет АФС',
+  no_vls: 'Нет ВЛС',
   vls_only: 'Только ВЛС',
   afs_only: 'Только АФС',
 }
 const pairVariant: Record<PairStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  ok: 'success', reproject: 'warning', shifted: 'warning', incomplete: 'neutral',
+  ok: 'success', reproject: 'warning', shifted: 'warning',
+  no_afs: 'warning', no_vls: 'warning',
   vls_only: 'warning', afs_only: 'warning',
 }
 
@@ -157,7 +162,6 @@ export default function Upload() {
   }
 
   const statuses = tiles.map((t) => pairStatus(t, mode, originTolM))
-  const hasIncomplete = statuses.includes('incomplete')
   // Тайлы, у которых СК ВЛС отличается от целевой — их приводим и называем поимённо.
   const reprojectTiles = tiles.filter((t, i) => statuses[i] === 'reproject')
   // Пары с совпадающей СК, но разъехавшейся геопривязкой: сверяем нижний левый
@@ -165,8 +169,10 @@ export default function Upload() {
   const shiftedTiles = tiles
     .map((t) => ({ tile: t, offset: originOffsetM(t) }))
     .filter((r): r is { tile: InputTile; offset: number } => r.offset !== null && r.offset > originTolM)
-  const canProceed = !hasIncomplete
-  const incompleteTiles = tiles.filter((t, i) => statuses[i] === 'incomplete')
+  // Тайлы без одного из материалов. Расчёт проекта не блокируют — закрывают
+  // только те модули, чей входной материал отсутствует.
+  const noVlsTiles = tiles.filter((_, i) => statuses[i] === 'no_vls')
+  const noAfsTiles = tiles.filter((_, i) => statuses[i] === 'no_afs')
 
   // Сводка метаданных исходных материалов по обоим типам съёмки.
   const report = tiles.length ? aggregate(tiles) : null
@@ -229,8 +235,8 @@ export default function Upload() {
               <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
-                  Каталог ВЛС не указан — доступна только «Вода». «Рельеф» и «Древостой» считаются по
-                  облаку точек.
+                  Каталог ВЛС не указан — доступна только «Вода». «Рельеф» и «Древостой» без облака
+                  точек не считаются.
                 </div>
               </div>
             )}
@@ -381,7 +387,7 @@ export default function Upload() {
                           <div className="flex items-center gap-1.5">
                             {st === 'ok' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
                             {(st === 'reproject' || st === 'shifted') && <AlertTriangle className="h-4 w-4 text-amber-500" />}
-                            {st === 'incomplete' && <AlertTriangle className="h-4 w-4 text-slate-400" />}
+                            {(st === 'no_afs' || st === 'no_vls') && <AlertTriangle className="h-4 w-4 text-amber-500" />}
                             <Badge variant={pairVariant[st]}>{pairLabel[st]}</Badge>
                           </div>
                         </td>
@@ -393,7 +399,7 @@ export default function Upload() {
             </div>
 
             {/* Предупреждения валидации */}
-            {(reprojectTiles.length > 0 || shiftedTiles.length > 0 || hasIncomplete) && (
+            {(reprojectTiles.length > 0 || shiftedTiles.length > 0 || noVlsTiles.length > 0 || noAfsTiles.length > 0) && (
               <div className="mt-3 space-y-2">
                 {shiftedTiles.length > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
@@ -416,12 +422,22 @@ export default function Upload() {
                     </div>
                   </div>
                 )}
-                {hasIncomplete && (
+                {noVlsTiles.length > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
-                      Неполные пары — нет АФС или ВЛС: {incompleteTiles.map((t) => t.name).join(', ')}.
-                      Такие тайлы недоступны для расчёта.
+                      Нет ВЛС: {noVlsTiles.map((t) => t.name).join(', ')}. По этим тайлам не считаются
+                      «Рельеф» и «Древостой» — они идут по облаку точек. «Вода» доступна.
+                    </div>
+                  </div>
+                )}
+                {noAfsTiles.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      Нет АФС: {noAfsTiles.map((t) => t.name).join(', ')}. По этим тайлам не считается
+                      «Вода» — маску воды строит нейросеть по ортофотоплану. «Рельеф» доступен,
+                      «Древостой» — без детекции крон.
                     </div>
                   </div>
                 )}
@@ -443,8 +459,8 @@ export default function Upload() {
               <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
-                  ВЛС не загружены — доступна только «Вода». «Рельеф» и «Древостой» считаются по
-                  облаку точек.
+                  ВЛС не загружены — доступна только «Вода». «Рельеф» и «Древостой» без облака точек
+                  не считаются.
                 </div>
               </div>
             )}
@@ -460,7 +476,8 @@ export default function Upload() {
               </div>
             )}
 
-            {canProceed && tiles.length > 0 && mode === 'pair' && reprojectTiles.length === 0 && shiftedTiles.length === 0 && (
+            {tiles.length > 0 && mode === 'pair' && reprojectTiles.length === 0 && shiftedTiles.length === 0
+              && noVlsTiles.length === 0 && noAfsTiles.length === 0 && (
               <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 Все пары валидны. Можно запускать обработку в разделе «Рельеф», «Древостой» или «Вода».
